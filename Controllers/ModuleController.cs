@@ -2,6 +2,7 @@ using Gateway.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
 using Module = SBD.Domain.Entities.Module;
 
@@ -32,14 +33,10 @@ public class ModuleController : ControllerBase
                 m.Id, m.Code, m.Name, m.Description, m.Version, m.Category,
                 m.IsDefault, m.IsEnabled, m.AssignableToTeacher, m.AssignableToStudent,
                 m.Icon, m.RoutePath, m.SortOrder,
-                EF.Property<string>(m, "VisibilityLevels"),
-                EF.Property<string>(m, "RegistrationType"),
-                EF.Property<string?>(m, "EntryUrl"),
-                EF.Property<string?>(m, "BundlePath"),
-                EF.Property<string?>(m, "Author"),
-                EF.Property<string?>(m, "License"),
-                EF.Property<DateTimeOffset>(m, "CreatedAt"),
-                EF.Property<DateTimeOffset>(m, "UpdatedAt")
+                m.VisibilityLevels, m.RegistrationType,
+                m.EntryUrl, m.BundlePath,
+                m.Author, m.License,
+                m.CreatedAt, m.UpdatedAt
             ))
             .ToListAsync();
         return Ok(modules);
@@ -50,28 +47,11 @@ public class ModuleController : ControllerBase
     {
         var module = await _context.Modules
             .AsNoTracking()
-            .Where(m => m.Id == id)
-            .Select(m => new
-            {
-                m.Id, m.Code, m.Name, m.Description, m.Version, m.Category,
-                m.IsDefault, m.IsEnabled, m.AssignableToTeacher, m.AssignableToStudent,
-                m.Icon, m.RoutePath, m.SortOrder,
-                VisibilityLevels = EF.Property<string>(m, "VisibilityLevels"),
-                RegistrationType = EF.Property<string>(m, "RegistrationType"),
-                EntryUrl = EF.Property<string?>(m, "EntryUrl"),
-                BundlePath = EF.Property<string?>(m, "BundlePath"),
-                ConfigJson = EF.Property<string?>(m, "ConfigJson"),
-                Author = EF.Property<string?>(m, "Author"),
-                License = EF.Property<string?>(m, "License"),
-                CreatedAt = EF.Property<DateTimeOffset>(m, "CreatedAt"),
-                UpdatedAt = EF.Property<DateTimeOffset>(m, "UpdatedAt"),
-            })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(m => m.Id == id);
         if (module == null) return NotFound(new { message = "Module not found" });
 
         var schoolCount = await _context.SchoolModules.CountAsync(sm => sm.ModuleId == id);
-        var areaCount = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
-            .CountAsync(ama => ama.ModuleId == id);
+        var areaCount = await _context.AreaModuleAssignments.CountAsync(ama => ama.ModuleId == id);
 
         return Ok(new ModuleDetailDto(
             module.Id, module.Code, module.Name, module.Description, module.Version,
@@ -90,6 +70,7 @@ public class ModuleController : ControllerBase
         if (await _context.Modules.AnyAsync(m => m.Code == request.Code))
             return Conflict(new { message = $"Module code '{request.Code}' already exists" });
 
+        var now = DateTimeOffset.UtcNow;
         var module = new Module
         {
             Code = request.Code,
@@ -104,23 +85,18 @@ public class ModuleController : ControllerBase
             Icon = request.Icon,
             RoutePath = request.RoutePath,
             SortOrder = request.SortOrder,
+            VisibilityLevels = request.VisibilityLevels ?? "school",
+            RegistrationType = request.RegistrationType ?? "internal",
+            EntryUrl = request.EntryUrl,
+            BundlePath = request.BundlePath,
+            ConfigJson = request.ConfigJson,
+            Author = request.Author,
+            License = request.License,
+            CreatedAt = now,
+            UpdatedAt = now
         };
 
         _context.Modules.Add(module);
-
-        // Set shadow properties for new fields
-        var entry = _context.Entry(module);
-        entry.Property("VisibilityLevels").CurrentValue = request.VisibilityLevels ?? "school";
-        entry.Property("RegistrationType").CurrentValue = request.RegistrationType ?? "internal";
-        entry.Property("EntryUrl").CurrentValue = request.EntryUrl;
-        entry.Property("BundlePath").CurrentValue = request.BundlePath;
-        entry.Property("ConfigJson").CurrentValue = request.ConfigJson;
-        entry.Property("Author").CurrentValue = request.Author;
-        entry.Property("License").CurrentValue = request.License;
-        var now = DateTimeOffset.UtcNow;
-        entry.Property("CreatedAt").CurrentValue = now;
-        entry.Property("UpdatedAt").CurrentValue = now;
-
         await _context.SaveChangesAsync();
         await _cache.RemoveAsync(CacheKey);
 
@@ -148,19 +124,14 @@ public class ModuleController : ControllerBase
         module.Icon = request.Icon;
         module.RoutePath = request.RoutePath;
         module.SortOrder = request.SortOrder;
-
-        // Update shadow properties
-        var entry = _context.Entry(module);
-        if (request.VisibilityLevels != null)
-            entry.Property("VisibilityLevels").CurrentValue = request.VisibilityLevels;
-        if (request.RegistrationType != null)
-            entry.Property("RegistrationType").CurrentValue = request.RegistrationType;
-        entry.Property("EntryUrl").CurrentValue = request.EntryUrl;
-        entry.Property("BundlePath").CurrentValue = request.BundlePath;
-        entry.Property("ConfigJson").CurrentValue = request.ConfigJson;
-        entry.Property("Author").CurrentValue = request.Author;
-        entry.Property("License").CurrentValue = request.License;
-        entry.Property("UpdatedAt").CurrentValue = DateTimeOffset.UtcNow;
+        module.VisibilityLevels = request.VisibilityLevels ?? module.VisibilityLevels;
+        module.RegistrationType = request.RegistrationType ?? module.RegistrationType;
+        module.EntryUrl = request.EntryUrl;
+        module.BundlePath = request.BundlePath;
+        module.ConfigJson = request.ConfigJson;
+        module.Author = request.Author;
+        module.License = request.License;
+        module.UpdatedAt = DateTimeOffset.UtcNow;
 
         await _context.SaveChangesAsync();
         await _cache.RemoveAsync(CacheKey);
@@ -178,8 +149,7 @@ public class ModuleController : ControllerBase
         if (hasSchoolModules)
             return Conflict(new { message = "Cannot delete module that is installed by schools. Remove school installations first." });
 
-        var hasAreaAssignments = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
-            .AnyAsync(ama => ama.ModuleId == id);
+        var hasAreaAssignments = await _context.AreaModuleAssignments.AnyAsync(ama => ama.ModuleId == id);
         if (hasAreaAssignments)
             return Conflict(new { message = "Cannot delete module that is assigned to areas. Remove area assignments first." });
 
@@ -190,16 +160,13 @@ public class ModuleController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>
-    /// Get assignment summary for a module: which areas and schools have it.
-    /// </summary>
     [HttpGet("{id:int}/assignments")]
     public async Task<ActionResult> GetAssignments(int id)
     {
         if (!await _context.Modules.AnyAsync(m => m.Id == id))
             return NotFound(new { message = "Module not found" });
 
-        var areaAssignments = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var areaAssignments = await _context.AreaModuleAssignments
             .AsNoTracking()
             .Where(ama => ama.ModuleId == id)
             .Include(ama => ama.Area)
@@ -220,37 +187,24 @@ public class ModuleController : ControllerBase
             {
                 sm.Id, sm.SchoolId,
                 SchoolName = sm.School.NameTh,
-                sm.IsEnabled,
-                IsPilot = EF.Property<bool>(sm, "IsPilot"),
-                sm.InstalledAt,
-                Notes = EF.Property<string?>(sm, "Notes")
+                sm.IsEnabled, sm.IsPilot,
+                sm.InstalledAt, sm.Notes
             })
             .ToListAsync();
 
         return Ok(new { areaAssignments, schoolAssignments });
     }
 
-    /// <summary>
-    /// Get visibility summary for a module.
-    /// </summary>
     [HttpGet("{id:int}/visibility")]
     public async Task<ActionResult> GetVisibility(int id)
     {
         var module = await _context.Modules
             .AsNoTracking()
-            .Where(m => m.Id == id)
-            .Select(m => new
-            {
-                m.Id, m.Code,
-                VisibilityLevels = EF.Property<string>(m, "VisibilityLevels"),
-                RegistrationType = EF.Property<string>(m, "RegistrationType"),
-            })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(m => m.Id == id);
         if (module == null) return NotFound(new { message = "Module not found" });
 
         var levels = module.VisibilityLevels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var areaCount = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
-            .CountAsync(ama => ama.ModuleId == id && ama.IsEnabled);
+        var areaCount = await _context.AreaModuleAssignments.CountAsync(ama => ama.ModuleId == id && ama.IsEnabled);
         var schoolCount = await _context.SchoolModules.CountAsync(sm => sm.ModuleId == id && sm.IsEnabled);
 
         return Ok(new
@@ -264,9 +218,6 @@ public class ModuleController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Upload a module bundle to MinIO storage.
-    /// </summary>
     [HttpPost("upload")]
     public async Task<ActionResult> UploadBundle([FromForm] int moduleId, IFormFile file)
     {
@@ -299,10 +250,9 @@ public class ModuleController : ControllerBase
             .WithObjectSize(file.Length)
             .WithContentType(file.ContentType));
 
-        var entry = _context.Entry(module);
-        entry.Property("BundlePath").CurrentValue = objectName;
-        entry.Property("RegistrationType").CurrentValue = "uploaded";
-        entry.Property("UpdatedAt").CurrentValue = DateTimeOffset.UtcNow;
+        module.BundlePath = objectName;
+        module.RegistrationType = "uploaded";
+        module.UpdatedAt = DateTimeOffset.UtcNow;
         await _context.SaveChangesAsync();
         await _cache.RemoveAsync(CacheKey);
 
@@ -313,25 +263,13 @@ public class ModuleController : ControllerBase
 // --- DTOs ---
 
 public record ModuleRequest(
-    string Code,
-    string Name,
-    string? Description,
-    string? Version,
-    string Category,
-    bool IsDefault,
-    bool IsEnabled,
-    bool AssignableToTeacher,
-    bool AssignableToStudent,
-    string? Icon,
-    string? RoutePath,
-    int SortOrder,
-    string? VisibilityLevels,
-    string? RegistrationType,
-    string? EntryUrl,
-    string? BundlePath,
-    string? ConfigJson,
-    string? Author,
-    string? License
+    string Code, string Name, string? Description, string? Version,
+    string Category, bool IsDefault, bool IsEnabled,
+    bool AssignableToTeacher, bool AssignableToStudent,
+    string? Icon, string? RoutePath, int SortOrder,
+    string? VisibilityLevels, string? RegistrationType,
+    string? EntryUrl, string? BundlePath, string? ConfigJson,
+    string? Author, string? License
 );
 
 public record ModuleListDto(
