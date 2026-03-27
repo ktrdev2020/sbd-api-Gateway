@@ -21,11 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Domain\SBD.Domain.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Application\SBD.Application.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Infrastructure\SBD.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Messaging\SBD.Messaging.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.ServiceRegistry\SBD.ServiceRegistry.csproj" />
+    <ProjectReference Include="libs\dotnet\SBD.Domain\SBD.Domain.csproj" />
+    <ProjectReference Include="libs\dotnet\SBD.Application\SBD.Application.csproj" />
+    <ProjectReference Include="libs\dotnet\SBD.Infrastructure\SBD.Infrastructure.csproj" />
+    <ProjectReference Include="libs\dotnet\SBD.Messaging\SBD.Messaging.csproj" />
+    <ProjectReference Include="libs\dotnet\SBD.ServiceRegistry\SBD.ServiceRegistry.csproj" />
   </ItemGroup>
 
 </Project>

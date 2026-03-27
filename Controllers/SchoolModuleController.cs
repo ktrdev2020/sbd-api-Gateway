@@ -50,6 +50,8 @@ public class SchoolModuleController : ControllerBase
                 sm.IsEnabled,
                 sm.Module.AssignableToTeacher,
                 sm.InstalledAt,
+                sm.IsPilot,
+                sm.Notes,
                 sm.TeacherAssignments
                     .Where(ta => ta.IsActive)
                     .Select(ta => new TeacherAssignmentDto(
@@ -64,6 +66,44 @@ public class SchoolModuleController : ControllerBase
             .ToListAsync();
 
         return Ok(schoolModules);
+    }
+
+    /// <summary>
+    /// Get modules available for this school (from area assignments).
+    /// </summary>
+    [HttpGet("available")]
+    public async Task<ActionResult> GetAvailableModules(int schoolId)
+    {
+        var school = await _context.Schools
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == schoolId);
+        if (school == null)
+            return NotFound(new { message = "School not found" });
+
+        if (school.AreaId == null)
+            return Ok(new List<object>());
+
+        // Get modules assigned to the school's area
+        var areaModules = await _context.AreaModuleAssignments
+            .AsNoTracking()
+            .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled)
+            .Include(ama => ama.Module)
+            .Select(ama => new
+            {
+                ama.ModuleId,
+                ama.Module.Code,
+                ama.Module.Name,
+                ama.Module.Description,
+                ama.Module.Icon,
+                ama.Module.Category,
+                ama.Module.Version,
+                ama.AllowSchoolSelfEnable,
+                IsInstalled = _context.SchoolModules
+                    .Any(sm => sm.SchoolId == schoolId && sm.ModuleId == ama.ModuleId)
+            })
+            .ToListAsync();
+
+        return Ok(areaModules);
     }
 
     /// <summary>
@@ -90,6 +130,8 @@ public class SchoolModuleController : ControllerBase
             SchoolId = schoolId,
             ModuleId = request.ModuleId,
             IsEnabled = true,
+            IsPilot = request.IsPilot,
+            Notes = request.Notes,
             InstalledAt = DateTimeOffset.UtcNow
         };
 
@@ -101,6 +143,7 @@ public class SchoolModuleController : ControllerBase
                 schoolModule.Id, schoolId, module.Id, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
                 schoolModule.IsEnabled, module.AssignableToTeacher, schoolModule.InstalledAt,
+                schoolModule.IsPilot, schoolModule.Notes,
                 new List<TeacherAssignmentDto>()
             ));
     }
@@ -202,6 +245,36 @@ public class SchoolModuleController : ControllerBase
     }
 
     /// <summary>
+    /// Get all teacher assignments for a school module.
+    /// </summary>
+    [HttpGet("{schoolModuleId:int}/teacher")]
+    public async Task<ActionResult<IEnumerable<TeacherAssignmentDto>>> GetTeacherAssignments(
+        int schoolId, int schoolModuleId)
+    {
+        var schoolModule = await _context.SchoolModules
+            .AnyAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+        if (!schoolModule)
+            return NotFound(new { message = "School module not found" });
+
+        var assignments = await _context.Set<TeacherModuleAssignment>()
+            .AsNoTracking()
+            .Where(ta => ta.SchoolModuleId == schoolModuleId)
+            .Include(ta => ta.Teacher)
+                .ThenInclude(t => t.TitlePrefix)
+            .Select(ta => new TeacherAssignmentDto(
+                ta.Id,
+                ta.TeacherId,
+                (ta.Teacher.TitlePrefix != null ? ta.Teacher.TitlePrefix.NameTh : "")
+                    + ta.Teacher.FirstName + " " + ta.Teacher.LastName,
+                ta.IsActive,
+                ta.AssignedAt
+            ))
+            .ToListAsync();
+
+        return Ok(assignments);
+    }
+
+    /// <summary>
     /// Remove a teacher from a school module.
     /// </summary>
     [HttpDelete("{schoolModuleId:int}/teacher/{assignmentId:int}")]
@@ -239,6 +312,8 @@ public record SchoolModuleDto(
     bool IsEnabled,
     bool AssignableToTeacher,
     DateTimeOffset InstalledAt,
+    bool IsPilot,
+    string? Notes,
     List<TeacherAssignmentDto> TeacherAssignments
 );
 
@@ -250,5 +325,5 @@ public record TeacherAssignmentDto(
     DateTimeOffset AssignedAt
 );
 
-public record InstallModuleRequest(int ModuleId);
+public record InstallModuleRequest(int ModuleId, bool IsPilot = false, string? Notes = null);
 public record AssignTeacherRequest(int TeacherId);
