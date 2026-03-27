@@ -1,0 +1,24 @@
+name: Notify Main Repo
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sbd main repo submodule update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ktrdev2020/sbd
+          event-type: submodule-update
+          client-payload: >-
+            {
+              "submodule": "gateway",
+              "submodule_path": "apps/dotnet/Gateway",
+              "sha": "${{ github.sha }}",
+              "ref": "${{ github.ref }}",
+              "repo": "${{ github.repository }}"
+            }
