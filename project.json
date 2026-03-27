@@ -3,9 +3,6 @@
   "projectType": "application",
   "sourceRoot": ".",
   "targets": {
-    "build": {
-      "command": "dotnet build Gateway.csproj"
-    },
     "serve": {
       "command": "dotnet watch run --project Gateway.csproj --no-hot-reload",
       "continuous": true
