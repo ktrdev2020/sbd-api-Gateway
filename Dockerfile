@@ -10,16 +10,15 @@ WORKDIR /src
 # Copy project file + NuGet config for restore
 COPY Gateway.csproj nuget.config ./
 
-# Authenticate with GitHub Packages NuGet feed
+# Authenticate with GitHub Packages NuGet feed and restore
 RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
-    && dotnet restore Gateway.csproj \
-    && rm -f nuget.config
+    && dotnet restore Gateway.csproj
 
-# Copy source and build
+# Copy all source (overwrites nuget.config with template) and publish
 COPY . .
-COPY nuget.config .
 RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
-    && dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore
+    && dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore \
+    && rm -f nuget.config
 
 FROM base AS final
 WORKDIR /app
