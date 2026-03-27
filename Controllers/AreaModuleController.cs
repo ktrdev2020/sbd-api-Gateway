@@ -1,3 +1,4 @@
+using Gateway.Data.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -28,27 +29,18 @@ public class AreaModuleController : ControllerBase
         if (!areaExists)
             return NotFound(new { message = "Area not found" });
 
-        var modules = await _context.AreaModuleAssignments
+        var modules = await _context.Set<AreaModuleAssignment>()
             .AsNoTracking()
             .Where(ama => ama.AreaId == areaId)
             .Include(ama => ama.Module)
             .OrderBy(ama => ama.Module.SortOrder)
             .ThenBy(ama => ama.Module.Name)
             .Select(ama => new AreaModuleDto(
-                ama.Id,
-                ama.AreaId,
-                ama.ModuleId,
-                ama.Module.Code,
-                ama.Module.Name,
-                ama.Module.Description,
-                ama.Module.Icon,
-                ama.Module.Category,
-                ama.Module.Version,
-                ama.IsEnabled,
-                ama.AllowSchoolSelfEnable,
-                ama.AssignedAt,
-                ama.AssignedBy,
-                ama.Notes
+                ama.Id, ama.AreaId, ama.ModuleId,
+                ama.Module.Code, ama.Module.Name, ama.Module.Description,
+                ama.Module.Icon, ama.Module.Category, ama.Module.Version,
+                ama.IsEnabled, ama.AllowSchoolSelfEnable,
+                ama.AssignedAt, ama.AssignedBy, ama.Notes
             ))
             .ToListAsync();
 
@@ -70,7 +62,7 @@ public class AreaModuleController : ControllerBase
         if (module == null)
             return NotFound(new { message = "Module not found" });
 
-        var alreadyAssigned = await _context.AreaModuleAssignments
+        var alreadyAssigned = await _context.Set<AreaModuleAssignment>()
             .AnyAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
         if (alreadyAssigned)
             return Conflict(new { message = "Module is already assigned to this area" });
@@ -86,7 +78,7 @@ public class AreaModuleController : ControllerBase
             Notes = request?.Notes
         };
 
-        _context.AreaModuleAssignments.Add(assignment);
+        _context.Set<AreaModuleAssignment>().Add(assignment);
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetAreaModules), new { areaId },
@@ -105,7 +97,7 @@ public class AreaModuleController : ControllerBase
     public async Task<ActionResult> UpdateAssignment(
         int areaId, int moduleId, [FromBody] UpdateAreaModuleRequest request)
     {
-        var assignment = await _context.AreaModuleAssignments
+        var assignment = await _context.Set<AreaModuleAssignment>()
             .AsTracking()
             .FirstOrDefaultAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
 
@@ -127,14 +119,14 @@ public class AreaModuleController : ControllerBase
     [HttpDelete("{moduleId:int}")]
     public async Task<ActionResult> RemoveModule(int areaId, int moduleId)
     {
-        var assignment = await _context.AreaModuleAssignments
+        var assignment = await _context.Set<AreaModuleAssignment>()
             .AsTracking()
             .FirstOrDefaultAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
 
         if (assignment == null)
             return NotFound(new { message = "Module is not assigned to this area" });
 
-        _context.AreaModuleAssignments.Remove(assignment);
+        _context.Set<AreaModuleAssignment>().Remove(assignment);
         await _context.SaveChangesAsync();
 
         return NoContent();
@@ -146,9 +138,9 @@ public class AreaModuleController : ControllerBase
     [HttpGet("{moduleId:int}/schools")]
     public async Task<ActionResult> GetSchoolsUsingModule(int areaId, int moduleId)
     {
-        var assignment = await _context.AreaModuleAssignments
+        var assigned = await _context.Set<AreaModuleAssignment>()
             .AnyAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
-        if (!assignment)
+        if (!assigned)
             return NotFound(new { message = "Module is not assigned to this area" });
 
         var schools = await _context.SchoolModules
@@ -157,14 +149,13 @@ public class AreaModuleController : ControllerBase
             .Include(sm => sm.School)
             .Select(sm => new
             {
-                sm.Id,
-                sm.SchoolId,
+                sm.Id, sm.SchoolId,
                 SchoolName = sm.School.NameTh,
                 SchoolCode = sm.School.SchoolCode,
                 sm.IsEnabled,
-                sm.IsPilot,
+                IsPilot = EF.Property<bool>(sm, "IsPilot"),
                 sm.InstalledAt,
-                sm.Notes
+                Notes = EF.Property<string?>(sm, "Notes")
             })
             .ToListAsync();
 
@@ -178,16 +169,14 @@ public class AreaModuleController : ControllerBase
     public async Task<ActionResult> AssignModuleToSchools(
         int areaId, int moduleId, [FromBody] AssignModuleToSchoolsRequest request)
     {
-        var areaAssignment = await _context.AreaModuleAssignments
+        var areaAssigned = await _context.Set<AreaModuleAssignment>()
             .AnyAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
-        if (!areaAssignment)
+        if (!areaAssigned)
             return NotFound(new { message = "Module is not assigned to this area" });
 
-        var module = await _context.Modules.FirstOrDefaultAsync(m => m.Id == moduleId);
-        if (module == null)
+        if (!await _context.Modules.AnyAsync(m => m.Id == moduleId))
             return NotFound(new { message = "Module not found" });
 
-        // Verify all schools belong to this area
         var schoolIds = request.SchoolIds.Distinct().ToList();
         var schoolsInArea = await _context.Schools
             .Where(s => schoolIds.Contains(s.Id) && s.AreaId == areaId)
@@ -198,29 +187,32 @@ public class AreaModuleController : ControllerBase
         if (invalidSchools.Any())
             return BadRequest(new { message = "Some schools do not belong to this area", invalidSchoolIds = invalidSchools });
 
-        // Find already installed
         var alreadyInstalled = await _context.SchoolModules
             .Where(sm => schoolIds.Contains(sm.SchoolId) && sm.ModuleId == moduleId)
             .Select(sm => sm.SchoolId)
             .ToListAsync();
 
         var newSchoolIds = schoolIds.Except(alreadyInstalled).ToList();
-        var newAssignments = newSchoolIds.Select(schoolId => new SchoolModule
+        foreach (var schoolId in newSchoolIds)
         {
-            SchoolId = schoolId,
-            ModuleId = moduleId,
-            IsEnabled = true,
-            IsPilot = request.IsPilot,
-            Notes = request.Notes,
-            InstalledAt = DateTimeOffset.UtcNow
-        }).ToList();
+            var sm = new SchoolModule
+            {
+                SchoolId = schoolId,
+                ModuleId = moduleId,
+                IsEnabled = true,
+                InstalledAt = DateTimeOffset.UtcNow
+            };
+            _context.SchoolModules.Add(sm);
+            var smEntry = _context.Entry(sm);
+            smEntry.Property("IsPilot").CurrentValue = request.IsPilot;
+            smEntry.Property("Notes").CurrentValue = request.Notes;
+        }
 
-        _context.SchoolModules.AddRange(newAssignments);
         await _context.SaveChangesAsync();
 
         return Ok(new
         {
-            message = $"Module assigned to {newAssignments.Count} school(s)",
+            message = $"Module assigned to {newSchoolIds.Count} school(s)",
             assignedSchoolIds = newSchoolIds,
             alreadyInstalledSchoolIds = alreadyInstalled.Intersect(schoolIds).ToList()
         });

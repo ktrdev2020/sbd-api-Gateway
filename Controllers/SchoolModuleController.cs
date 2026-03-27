@@ -38,29 +38,19 @@ public class SchoolModuleController : ControllerBase
             .OrderBy(sm => sm.Module.SortOrder)
             .ThenBy(sm => sm.Module.Name)
             .Select(sm => new SchoolModuleDto(
-                sm.Id,
-                sm.SchoolId,
-                sm.ModuleId,
-                sm.Module.Code,
-                sm.Module.Name,
-                sm.Module.Description,
-                sm.Module.Icon,
-                sm.Module.Category,
-                sm.Module.Version,
-                sm.IsEnabled,
-                sm.Module.AssignableToTeacher,
-                sm.InstalledAt,
-                sm.IsPilot,
-                sm.Notes,
+                sm.Id, sm.SchoolId, sm.ModuleId,
+                sm.Module.Code, sm.Module.Name, sm.Module.Description,
+                sm.Module.Icon, sm.Module.Category, sm.Module.Version,
+                sm.IsEnabled, sm.Module.AssignableToTeacher, sm.InstalledAt,
+                EF.Property<bool>(sm, "IsPilot"),
+                EF.Property<string?>(sm, "Notes"),
                 sm.TeacherAssignments
                     .Where(ta => ta.IsActive)
                     .Select(ta => new TeacherAssignmentDto(
-                        ta.Id,
-                        ta.TeacherId,
+                        ta.Id, ta.TeacherId,
                         (ta.Teacher.TitlePrefix != null ? ta.Teacher.TitlePrefix.NameTh : "")
                             + ta.Teacher.FirstName + " " + ta.Teacher.LastName,
-                        ta.IsActive,
-                        ta.AssignedAt
+                        ta.IsActive, ta.AssignedAt
                     )).ToList()
             ))
             .ToListAsync();
@@ -83,8 +73,7 @@ public class SchoolModuleController : ControllerBase
         if (school.AreaId == null)
             return Ok(new List<object>());
 
-        // Get modules assigned to the school's area
-        var areaModules = await _context.AreaModuleAssignments
+        var areaModules = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
             .AsNoTracking()
             .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled)
             .Include(ama => ama.Module)
@@ -130,12 +119,16 @@ public class SchoolModuleController : ControllerBase
             SchoolId = schoolId,
             ModuleId = request.ModuleId,
             IsEnabled = true,
-            IsPilot = request.IsPilot,
-            Notes = request.Notes,
             InstalledAt = DateTimeOffset.UtcNow
         };
 
         _context.SchoolModules.Add(schoolModule);
+
+        // Set shadow properties
+        var entry = _context.Entry(schoolModule);
+        entry.Property("IsPilot").CurrentValue = request.IsPilot;
+        entry.Property("Notes").CurrentValue = request.Notes;
+
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetSchoolModules), new { schoolId },
@@ -143,7 +136,7 @@ public class SchoolModuleController : ControllerBase
                 schoolModule.Id, schoolId, module.Id, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
                 schoolModule.IsEnabled, module.AssignableToTeacher, schoolModule.InstalledAt,
-                schoolModule.IsPilot, schoolModule.Notes,
+                request.IsPilot, request.Notes,
                 new List<TeacherAssignmentDto>()
             ));
     }
@@ -161,7 +154,6 @@ public class SchoolModuleController : ControllerBase
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
 
-        // Remove related teacher assignments first
         var assignments = await _context.Set<TeacherModuleAssignment>()
             .Where(ta => ta.SchoolModuleId == schoolModuleId)
             .ToListAsync();
@@ -209,13 +201,11 @@ public class SchoolModuleController : ControllerBase
         if (!schoolModule.Module.AssignableToTeacher)
             return BadRequest(new { message = "This module does not support teacher assignment" });
 
-        // Verify the teacher belongs to this school
         var teacherInSchool = await _context.Set<PersonnelSchoolAssignment>()
             .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolId == schoolId);
         if (!teacherInSchool)
             return BadRequest(new { message = "Teacher is not assigned to this school" });
 
-        // Check for duplicate assignment
         var alreadyAssigned = await _context.Set<TeacherModuleAssignment>()
             .AnyAsync(ta => ta.TeacherId == request.TeacherId && ta.SchoolModuleId == schoolModuleId);
         if (alreadyAssigned)
@@ -232,7 +222,6 @@ public class SchoolModuleController : ControllerBase
         _context.Set<TeacherModuleAssignment>().Add(assignment);
         await _context.SaveChangesAsync();
 
-        // Fetch teacher name for response
         var teacher = await _context.Set<Personnel>()
             .AsNoTracking()
             .Include(p => p.TitlePrefix)
@@ -251,9 +240,9 @@ public class SchoolModuleController : ControllerBase
     public async Task<ActionResult<IEnumerable<TeacherAssignmentDto>>> GetTeacherAssignments(
         int schoolId, int schoolModuleId)
     {
-        var schoolModule = await _context.SchoolModules
+        var exists = await _context.SchoolModules
             .AnyAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
-        if (!schoolModule)
+        if (!exists)
             return NotFound(new { message = "School module not found" });
 
         var assignments = await _context.Set<TeacherModuleAssignment>()
@@ -262,12 +251,10 @@ public class SchoolModuleController : ControllerBase
             .Include(ta => ta.Teacher)
                 .ThenInclude(t => t.TitlePrefix)
             .Select(ta => new TeacherAssignmentDto(
-                ta.Id,
-                ta.TeacherId,
+                ta.Id, ta.TeacherId,
                 (ta.Teacher.TitlePrefix != null ? ta.Teacher.TitlePrefix.NameTh : "")
                     + ta.Teacher.FirstName + " " + ta.Teacher.LastName,
-                ta.IsActive,
-                ta.AssignedAt
+                ta.IsActive, ta.AssignedAt
             ))
             .ToListAsync();
 
@@ -300,29 +287,17 @@ public class SchoolModuleController : ControllerBase
 // --- DTOs ---
 
 public record SchoolModuleDto(
-    int Id,
-    int SchoolId,
-    int ModuleId,
-    string ModuleCode,
-    string ModuleName,
-    string? ModuleDescription,
-    string? ModuleIcon,
-    string ModuleCategory,
-    string? ModuleVersion,
-    bool IsEnabled,
-    bool AssignableToTeacher,
-    DateTimeOffset InstalledAt,
-    bool IsPilot,
-    string? Notes,
+    int Id, int SchoolId, int ModuleId,
+    string ModuleCode, string ModuleName, string? ModuleDescription,
+    string? ModuleIcon, string ModuleCategory, string? ModuleVersion,
+    bool IsEnabled, bool AssignableToTeacher, DateTimeOffset InstalledAt,
+    bool IsPilot, string? Notes,
     List<TeacherAssignmentDto> TeacherAssignments
 );
 
 public record TeacherAssignmentDto(
-    int Id,
-    int TeacherId,
-    string TeacherName,
-    bool IsActive,
-    DateTimeOffset AssignedAt
+    int Id, int TeacherId, string TeacherName,
+    bool IsActive, DateTimeOffset AssignedAt
 );
 
 public record InstallModuleRequest(int ModuleId, bool IsPilot = false, string? Notes = null);

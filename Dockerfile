@@ -4,20 +4,22 @@ EXPOSE 8080
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
+ARG GITHUB_TOKEN
 WORKDIR /src
 
-# Copy all csproj files for restore
-COPY Gateway.csproj ./
-COPY libs/dotnet/SBD.Domain/SBD.Domain.csproj libs/dotnet/SBD.Domain/
-COPY libs/dotnet/SBD.Application/SBD.Application.csproj libs/dotnet/SBD.Application/
-COPY libs/dotnet/SBD.Infrastructure/SBD.Infrastructure.csproj libs/dotnet/SBD.Infrastructure/
-COPY libs/dotnet/SBD.Messaging/SBD.Messaging.csproj libs/dotnet/SBD.Messaging/
-COPY libs/dotnet/SBD.ServiceRegistry/SBD.ServiceRegistry.csproj libs/dotnet/SBD.ServiceRegistry/
-RUN dotnet restore Gateway.csproj
+# Copy project file + NuGet config for restore
+COPY Gateway.csproj nuget.config ./
 
-# Copy source
+# Authenticate with GitHub Packages NuGet feed
+RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
+    && dotnet restore Gateway.csproj \
+    && rm -f nuget.config
+
+# Copy source and build
 COPY . .
-RUN dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+COPY nuget.config .
+RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
+    && dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM base AS final
 WORKDIR /app

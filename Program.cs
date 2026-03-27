@@ -1,4 +1,5 @@
 using System.Text;
+using Gateway.Data;
 using Gateway.Services;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -58,9 +59,9 @@ var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? thro
 builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnection));
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 
-// Add DbContext (read-only)
+// Add DbContext - GatewayDbContext extends SbdDbContext with local entities + shadow properties
 var connectionString = builder.Configuration.GetConnectionString("PostgreSQL") ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-builder.Services.AddDbContext<SbdDbContext>(options =>
+builder.Services.AddDbContext<SbdDbContext, GatewayDbContext>(options =>
     options.UseNpgsql(connectionString)
            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
 
@@ -114,15 +115,41 @@ using (var scope = app.Services.CreateScope())
     if (!await db.Modules.AnyAsync())
     {
         var now = DateTimeOffset.UtcNow;
-        db.Modules.AddRange(
-            new SBD.Domain.Entities.Module { Code = "core-dashboard",  Name = "Dashboard",            Category = "Core",    Icon = "📊", SortOrder = 1,  IsDefault = true,  IsEnabled = true, Description = "แดชบอร์ดหลักของระบบ",           VisibilityLevels = "public,student,teacher,school,area,superadmin", RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "user-mgmt",       Name = "จัดการผู้ใช้",          Category = "Core",    Icon = "👥", SortOrder = 2,  IsDefault = true,  IsEnabled = true, Description = "จัดการผู้ใช้งานระบบทั้งหมด",     VisibilityLevels = "superadmin,area,school",                         RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "school-mgmt",     Name = "จัดการโรงเรียน",        Category = "Core",    Icon = "🏫", SortOrder = 3,  IsDefault = true,  IsEnabled = true, Description = "จัดการข้อมูลโรงเรียนในระบบ",     VisibilityLevels = "superadmin,area,school",                         RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "area-mgmt",       Name = "จัดการเขตพื้นที่",      Category = "Core",    Icon = "🗺️", SortOrder = 4, IsDefault = true,  IsEnabled = true, Description = "จัดการเขตพื้นที่การศึกษา",       VisibilityLevels = "superadmin,area",                                RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "curriculum",      Name = "หลักสูตรสถานศึกษา",    Category = "Feature", Icon = "📚", SortOrder = 10, IsDefault = false, IsEnabled = true, RoutePath = "curriculum", Description = "ระบบเขียนหลักสูตรสถานศึกษา", AssignableToTeacher = true,                              VisibilityLevels = "teacher,school,area", RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "attendance",      Name = "ระบบเช็คชื่อ",         Category = "Feature", Icon = "✅", SortOrder = 11, IsDefault = false, IsEnabled = true, RoutePath = "attendance", Description = "บันทึกการเข้าเรียนรายวัน",   AssignableToTeacher = true, AssignableToStudent = true, VisibilityLevels = "student,teacher,school,area", RegistrationType = "internal", CreatedAt = now, UpdatedAt = now },
-            new SBD.Domain.Entities.Module { Code = "gradebook",       Name = "สมุดเกรด",             Category = "Feature", Icon = "📝", SortOrder = 12, IsDefault = false, IsEnabled = true, RoutePath = "gradebook",  Description = "บันทึกและคำนวณผลการเรียน",   AssignableToTeacher = true, AssignableToStudent = true, VisibilityLevels = "student,teacher,school,area", RegistrationType = "internal", CreatedAt = now, UpdatedAt = now }
-        );
+        var modules = new[]
+        {
+            new SBD.Domain.Entities.Module { Code = "core-dashboard",  Name = "Dashboard",         Category = "Core",    Icon = "📊", SortOrder = 1,  IsDefault = true,  IsEnabled = true, Description = "แดชบอร์ดหลักของระบบ" },
+            new SBD.Domain.Entities.Module { Code = "user-mgmt",       Name = "จัดการผู้ใช้",        Category = "Core",    Icon = "👥", SortOrder = 2,  IsDefault = true,  IsEnabled = true, Description = "จัดการผู้ใช้งานระบบทั้งหมด" },
+            new SBD.Domain.Entities.Module { Code = "school-mgmt",     Name = "จัดการโรงเรียน",      Category = "Core",    Icon = "🏫", SortOrder = 3,  IsDefault = true,  IsEnabled = true, Description = "จัดการข้อมูลโรงเรียนในระบบ" },
+            new SBD.Domain.Entities.Module { Code = "area-mgmt",       Name = "จัดการเขตพื้นที่",     Category = "Core",    Icon = "🗺️", SortOrder = 4, IsDefault = true,  IsEnabled = true, Description = "จัดการเขตพื้นที่การศึกษา" },
+            new SBD.Domain.Entities.Module { Code = "curriculum",      Name = "หลักสูตรสถานศึกษา",  Category = "Feature", Icon = "📚", SortOrder = 10, IsDefault = false, IsEnabled = true, RoutePath = "curriculum", Description = "ระบบเขียนหลักสูตรสถานศึกษา", AssignableToTeacher = true },
+            new SBD.Domain.Entities.Module { Code = "attendance",      Name = "ระบบเช็คชื่อ",       Category = "Feature", Icon = "✅", SortOrder = 11, IsDefault = false, IsEnabled = true, RoutePath = "attendance", Description = "บันทึกการเข้าเรียนรายวัน", AssignableToTeacher = true, AssignableToStudent = true },
+            new SBD.Domain.Entities.Module { Code = "gradebook",       Name = "สมุดเกรด",           Category = "Feature", Icon = "📝", SortOrder = 12, IsDefault = false, IsEnabled = true, RoutePath = "gradebook",  Description = "บันทึกและคำนวณผลการเรียน", AssignableToTeacher = true, AssignableToStudent = true },
+        };
+
+        // Shadow property visibility/registration seed values
+        var visibilityMap = new Dictionary<string, string>
+        {
+            ["core-dashboard"] = "public,student,teacher,school,area,superadmin",
+            ["user-mgmt"] = "superadmin,area,school",
+            ["school-mgmt"] = "superadmin,area,school",
+            ["area-mgmt"] = "superadmin,area",
+            ["curriculum"] = "teacher,school,area",
+            ["attendance"] = "student,teacher,school,area",
+            ["gradebook"] = "student,teacher,school,area",
+        };
+
+        db.Modules.AddRange(modules);
+
+        // Set shadow properties via ChangeTracker
+        foreach (var module in modules)
+        {
+            var entry = db.Entry(module);
+            entry.Property("VisibilityLevels").CurrentValue = visibilityMap[module.Code];
+            entry.Property("RegistrationType").CurrentValue = "internal";
+            entry.Property("CreatedAt").CurrentValue = now;
+            entry.Property("UpdatedAt").CurrentValue = now;
+        }
+
         await db.SaveChangesAsync();
         Console.WriteLine("[Seed] Default modules created.");
     }

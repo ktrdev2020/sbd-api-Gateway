@@ -1,5 +1,11 @@
-namespace SBD.Domain.Entities;
+using SBD.Domain.Entities;
 
+namespace Gateway.Data.Entities;
+
+/// <summary>
+/// AreaAdmin assigns modules to an area.
+/// Schools in the area can then install these modules.
+/// </summary>
 public class AreaModuleAssignment
 {
     public int Id { get; set; }
@@ -8,7 +14,7 @@ public class AreaModuleAssignment
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
-    /// Whether schools in this area can self-enable this module.
+    /// Whether schools in this area can self-enable this module without AreaAdmin approval.
     /// </summary>
     public bool AllowSchoolSelfEnable { get; set; }
 
