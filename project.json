@@ -1,21 +1,23 @@
 {
   "name": "Gateway",
   "projectType": "application",
-  "sourceRoot": "apps/dotnet/Gateway",
+  "sourceRoot": ".",
   "targets": {
     "build": {
-      "command": "dotnet build apps/dotnet/Gateway/Gateway.csproj",
-      "dependsOn": ["auth-service:build"]
+      "command": "dotnet build Gateway.csproj"
     },
     "serve": {
-      "command": "dotnet watch run --project apps/dotnet/Gateway/Gateway.csproj --no-hot-reload",
+      "command": "dotnet watch run --project Gateway.csproj --no-hot-reload",
       "continuous": true
     },
     "stop": {
       "command": "powershell -Command \"Get-Process -Name Gateway -EA SilentlyContinue | Stop-Process -Force\""
     },
     "db-migrate": {
-      "command": "dotnet ef database update --project libs/dotnet/SBD.Infrastructure/SBD.Infrastructure.csproj --startup-project apps/dotnet/Gateway/Gateway.csproj"
+      "command": "dotnet ef database update --startup-project Gateway.csproj"
+    },
+    "db-migration-add": {
+      "command": "dotnet ef migrations add {args} --startup-project Gateway.csproj --output-dir Data/Migrations"
     }
   }
 }

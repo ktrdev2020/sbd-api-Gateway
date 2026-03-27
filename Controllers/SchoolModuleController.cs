@@ -38,32 +38,61 @@ public class SchoolModuleController : ControllerBase
             .OrderBy(sm => sm.Module.SortOrder)
             .ThenBy(sm => sm.Module.Name)
             .Select(sm => new SchoolModuleDto(
-                sm.Id,
-                sm.SchoolId,
-                sm.ModuleId,
-                sm.Module.Code,
-                sm.Module.Name,
-                sm.Module.Description,
-                sm.Module.Icon,
-                sm.Module.Category,
-                sm.Module.Version,
-                sm.IsEnabled,
-                sm.Module.AssignableToTeacher,
-                sm.InstalledAt,
+                sm.Id, sm.SchoolId, sm.ModuleId,
+                sm.Module.Code, sm.Module.Name, sm.Module.Description,
+                sm.Module.Icon, sm.Module.Category, sm.Module.Version,
+                sm.IsEnabled, sm.Module.AssignableToTeacher, sm.InstalledAt,
+                EF.Property<bool>(sm, "IsPilot"),
+                EF.Property<string?>(sm, "Notes"),
                 sm.TeacherAssignments
                     .Where(ta => ta.IsActive)
                     .Select(ta => new TeacherAssignmentDto(
-                        ta.Id,
-                        ta.TeacherId,
+                        ta.Id, ta.TeacherId,
                         (ta.Teacher.TitlePrefix != null ? ta.Teacher.TitlePrefix.NameTh : "")
                             + ta.Teacher.FirstName + " " + ta.Teacher.LastName,
-                        ta.IsActive,
-                        ta.AssignedAt
+                        ta.IsActive, ta.AssignedAt
                     )).ToList()
             ))
             .ToListAsync();
 
         return Ok(schoolModules);
+    }
+
+    /// <summary>
+    /// Get modules available for this school (from area assignments).
+    /// </summary>
+    [HttpGet("available")]
+    public async Task<ActionResult> GetAvailableModules(int schoolId)
+    {
+        var school = await _context.Schools
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == schoolId);
+        if (school == null)
+            return NotFound(new { message = "School not found" });
+
+        if (school.AreaId == null)
+            return Ok(new List<object>());
+
+        var areaModules = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+            .AsNoTracking()
+            .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled)
+            .Include(ama => ama.Module)
+            .Select(ama => new
+            {
+                ama.ModuleId,
+                ama.Module.Code,
+                ama.Module.Name,
+                ama.Module.Description,
+                ama.Module.Icon,
+                ama.Module.Category,
+                ama.Module.Version,
+                ama.AllowSchoolSelfEnable,
+                IsInstalled = _context.SchoolModules
+                    .Any(sm => sm.SchoolId == schoolId && sm.ModuleId == ama.ModuleId)
+            })
+            .ToListAsync();
+
+        return Ok(areaModules);
     }
 
     /// <summary>
@@ -94,6 +123,12 @@ public class SchoolModuleController : ControllerBase
         };
 
         _context.SchoolModules.Add(schoolModule);
+
+        // Set shadow properties
+        var entry = _context.Entry(schoolModule);
+        entry.Property("IsPilot").CurrentValue = request.IsPilot;
+        entry.Property("Notes").CurrentValue = request.Notes;
+
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetSchoolModules), new { schoolId },
@@ -101,6 +136,7 @@ public class SchoolModuleController : ControllerBase
                 schoolModule.Id, schoolId, module.Id, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
                 schoolModule.IsEnabled, module.AssignableToTeacher, schoolModule.InstalledAt,
+                request.IsPilot, request.Notes,
                 new List<TeacherAssignmentDto>()
             ));
     }
@@ -118,7 +154,6 @@ public class SchoolModuleController : ControllerBase
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
 
-        // Remove related teacher assignments first
         var assignments = await _context.Set<TeacherModuleAssignment>()
             .Where(ta => ta.SchoolModuleId == schoolModuleId)
             .ToListAsync();
@@ -166,13 +201,11 @@ public class SchoolModuleController : ControllerBase
         if (!schoolModule.Module.AssignableToTeacher)
             return BadRequest(new { message = "This module does not support teacher assignment" });
 
-        // Verify the teacher belongs to this school
         var teacherInSchool = await _context.Set<PersonnelSchoolAssignment>()
             .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolId == schoolId);
         if (!teacherInSchool)
             return BadRequest(new { message = "Teacher is not assigned to this school" });
 
-        // Check for duplicate assignment
         var alreadyAssigned = await _context.Set<TeacherModuleAssignment>()
             .AnyAsync(ta => ta.TeacherId == request.TeacherId && ta.SchoolModuleId == schoolModuleId);
         if (alreadyAssigned)
@@ -189,7 +222,6 @@ public class SchoolModuleController : ControllerBase
         _context.Set<TeacherModuleAssignment>().Add(assignment);
         await _context.SaveChangesAsync();
 
-        // Fetch teacher name for response
         var teacher = await _context.Set<Personnel>()
             .AsNoTracking()
             .Include(p => p.TitlePrefix)
@@ -199,6 +231,34 @@ public class SchoolModuleController : ControllerBase
 
         return CreatedAtAction(nameof(GetSchoolModules), new { schoolId },
             new TeacherAssignmentDto(assignment.Id, teacher.Id, teacherName, true, assignment.AssignedAt));
+    }
+
+    /// <summary>
+    /// Get all teacher assignments for a school module.
+    /// </summary>
+    [HttpGet("{schoolModuleId:int}/teacher")]
+    public async Task<ActionResult<IEnumerable<TeacherAssignmentDto>>> GetTeacherAssignments(
+        int schoolId, int schoolModuleId)
+    {
+        var exists = await _context.SchoolModules
+            .AnyAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+        if (!exists)
+            return NotFound(new { message = "School module not found" });
+
+        var assignments = await _context.Set<TeacherModuleAssignment>()
+            .AsNoTracking()
+            .Where(ta => ta.SchoolModuleId == schoolModuleId)
+            .Include(ta => ta.Teacher)
+                .ThenInclude(t => t.TitlePrefix)
+            .Select(ta => new TeacherAssignmentDto(
+                ta.Id, ta.TeacherId,
+                (ta.Teacher.TitlePrefix != null ? ta.Teacher.TitlePrefix.NameTh : "")
+                    + ta.Teacher.FirstName + " " + ta.Teacher.LastName,
+                ta.IsActive, ta.AssignedAt
+            ))
+            .ToListAsync();
+
+        return Ok(assignments);
     }
 
     /// <summary>
@@ -227,28 +287,18 @@ public class SchoolModuleController : ControllerBase
 // --- DTOs ---
 
 public record SchoolModuleDto(
-    int Id,
-    int SchoolId,
-    int ModuleId,
-    string ModuleCode,
-    string ModuleName,
-    string? ModuleDescription,
-    string? ModuleIcon,
-    string ModuleCategory,
-    string? ModuleVersion,
-    bool IsEnabled,
-    bool AssignableToTeacher,
-    DateTimeOffset InstalledAt,
+    int Id, int SchoolId, int ModuleId,
+    string ModuleCode, string ModuleName, string? ModuleDescription,
+    string? ModuleIcon, string ModuleCategory, string? ModuleVersion,
+    bool IsEnabled, bool AssignableToTeacher, DateTimeOffset InstalledAt,
+    bool IsPilot, string? Notes,
     List<TeacherAssignmentDto> TeacherAssignments
 );
 
 public record TeacherAssignmentDto(
-    int Id,
-    int TeacherId,
-    string TeacherName,
-    bool IsActive,
-    DateTimeOffset AssignedAt
+    int Id, int TeacherId, string TeacherName,
+    bool IsActive, DateTimeOffset AssignedAt
 );
 
-public record InstallModuleRequest(int ModuleId);
+public record InstallModuleRequest(int ModuleId, bool IsPilot = false, string? Notes = null);
 public record AssignTeacherRequest(int TeacherId);

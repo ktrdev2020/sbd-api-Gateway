@@ -1,0 +1,48 @@
+name: Build & Test Gateway
+
+on:
+  push:
+    branches: [master, claude/**]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Authenticate NuGet (GitHub Packages)
+        run: |
+          dotnet nuget update source github-ktrdev2020 \
+            --configfile nuget.config \
+            --username ktrdev2020 \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text
+
+      - name: Restore dependencies
+        run: dotnet restore Gateway.csproj
+
+      - name: Build
+        run: dotnet build Gateway.csproj --no-restore -c Release
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/master'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -t sbd-gateway:${{ github.sha }} \
+            .

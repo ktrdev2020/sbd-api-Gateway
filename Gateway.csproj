@@ -20,12 +20,12 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.0.0" />
   </ItemGroup>
 
+  <!-- SBD shared libraries from GitHub Packages (NuGet) -->
+  <!-- SBD.Domain + SBD.Application come as transitive dependencies -->
   <ItemGroup>
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Domain\SBD.Domain.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Application\SBD.Application.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Infrastructure\SBD.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.Messaging\SBD.Messaging.csproj" />
-    <ProjectReference Include="..\..\..\libs\dotnet\SBD.ServiceRegistry\SBD.ServiceRegistry.csproj" />
+    <PackageReference Include="SBD.Infrastructure" Version="1.0.*" />
+    <PackageReference Include="SBD.Messaging" Version="1.0.*" />
+    <PackageReference Include="SBD.ServiceRegistry" Version="1.0.*" />
   </ItemGroup>
 
 </Project>
