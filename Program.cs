@@ -63,7 +63,9 @@ builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 var connectionString = builder.Configuration.GetConnectionString("PostgreSQL") ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
 builder.Services.AddDbContext<SbdDbContext, GatewayDbContext>(options =>
     options.UseNpgsql(connectionString)
-           .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+           .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
+           .ConfigureWarnings(w => w.Ignore(
+               Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
 
 // Add MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
