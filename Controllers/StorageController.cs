@@ -19,10 +19,9 @@ public class StorageController : ControllerBase
         var accessKey = configuration["MinIO:AccessKey"] ?? throw new InvalidOperationException("MinIO AccessKey not configured");
         var secretKey = configuration["MinIO:SecretKey"] ?? throw new InvalidOperationException("MinIO SecretKey not configured");
 
-        var useSSL = bool.Parse(configuration["MinIO:UseSSL"] ?? "false");
-        var scheme = useSSL ? "https" : "http";
-        _minioClient = new MinioClientBuilder($"{scheme}://{endpoint}")
-            .WithStaticCredentials(accessKey, secretKey)
+        _minioClient = new MinioClient()
+            .WithEndpoint(endpoint)
+            .WithCredentials(accessKey, secretKey)
             .Build();
     }
 

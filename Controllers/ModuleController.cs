@@ -2,6 +2,7 @@ using Gateway.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Minio;
 using SBD.Infrastructure.Data;
 using Module = SBD.Domain.Entities.Module;
 
@@ -283,9 +284,10 @@ public class ModuleController : ControllerBase
         var bucketName = minioConfig["MinIO:BucketName"] ?? "sbd-main";
         var useSSL = bool.Parse(minioConfig["MinIO:UseSSL"] ?? "false");
 
-        var scheme = useSSL ? "https" : "http";
-        var minio = new Minio.MinioClientBuilder($"{scheme}://{endpoint}")
-            .WithStaticCredentials(accessKey, secretKeyVal)
+        var minio = new Minio.MinioClient()
+            .WithEndpoint(endpoint)
+            .WithCredentials(accessKey, secretKeyVal)
+            .WithSSL(useSSL)
             .Build();
 
         var objectName = $"module-bundles/{module.Code}/{file.FileName}";
