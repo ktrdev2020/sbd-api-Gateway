@@ -41,6 +41,7 @@ public class SchoolModuleController : ControllerBase
                 sm.Id, sm.SchoolId, sm.ModuleId,
                 sm.Module.Code, sm.Module.Name, sm.Module.Description,
                 sm.Module.Icon, sm.Module.Category, sm.Module.Version,
+                sm.Module.RoutePath,
                 sm.IsEnabled, sm.Module.AssignableToTeacher, sm.InstalledAt,
                 EF.Property<bool>(sm, "IsPilot"),
                 EF.Property<string?>(sm, "Notes"),
@@ -135,6 +136,7 @@ public class SchoolModuleController : ControllerBase
             new SchoolModuleDto(
                 schoolModule.Id, schoolId, module.Id, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
+                module.RoutePath,
                 schoolModule.IsEnabled, module.AssignableToTeacher, schoolModule.InstalledAt,
                 request.IsPilot, request.Notes,
                 new List<TeacherAssignmentDto>()
@@ -290,6 +292,7 @@ public record SchoolModuleDto(
     int Id, int SchoolId, int ModuleId,
     string ModuleCode, string ModuleName, string? ModuleDescription,
     string? ModuleIcon, string ModuleCategory, string? ModuleVersion,
+    string? ModuleRoutePath,
     bool IsEnabled, bool AssignableToTeacher, DateTimeOffset InstalledAt,
     bool IsPilot, string? Notes,
     List<TeacherAssignmentDto> TeacherAssignments
