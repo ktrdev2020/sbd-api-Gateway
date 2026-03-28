@@ -60,12 +60,15 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Conn
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 
 // Add DbContext - GatewayDbContext extends SbdDbContext with local entities + shadow properties
+// Register DbContextOptions<SbdDbContext> first (needed by GatewayDbContext constructor),
+// then override SbdDbContext resolution to use GatewayDbContext.
 var connectionString = builder.Configuration.GetConnectionString("PostgreSQL") ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-builder.Services.AddDbContext<SbdDbContext, GatewayDbContext>(options =>
+builder.Services.AddDbContext<SbdDbContext>(options =>
     options.UseNpgsql(connectionString)
            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
            .ConfigureWarnings(w => w.Ignore(
                Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 
 // Add MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
