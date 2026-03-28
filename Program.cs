@@ -117,6 +117,41 @@ using (var scope = app.Services.CreateScope())
     await db.Database.MigrateAsync();
     Console.WriteLine("[Migration] Database schema is up to date.");
 
+    // Apply Gateway-specific schema additions (shadow properties + AreaModuleAssignments)
+    // These columns are defined as shadow properties in GatewayDbContext but the migration
+    // lives in a different assembly, so we apply them via raw SQL (idempotent).
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- Module: shadow property columns
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""VisibilityLevels"" VARCHAR(200) NOT NULL DEFAULT 'school';
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""RegistrationType"" VARCHAR(50) NOT NULL DEFAULT 'internal';
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""EntryUrl"" TEXT;
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""BundlePath"" TEXT;
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""ConfigJson"" TEXT;
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""Author"" VARCHAR(200);
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""License"" VARCHAR(100);
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        -- SchoolModule: shadow property columns
+        ALTER TABLE ""SchoolModules"" ADD COLUMN IF NOT EXISTS ""Notes"" TEXT;
+        ALTER TABLE ""SchoolModules"" ADD COLUMN IF NOT EXISTS ""IsPilot"" BOOLEAN NOT NULL DEFAULT FALSE;
+        -- AreaModuleAssignments table
+        CREATE TABLE IF NOT EXISTS ""AreaModuleAssignments"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""AreaId"" INTEGER NOT NULL REFERENCES ""Areas""(""Id"") ON DELETE CASCADE,
+            ""ModuleId"" INTEGER NOT NULL REFERENCES ""Modules""(""Id"") ON DELETE CASCADE,
+            ""IsEnabled"" BOOLEAN NOT NULL DEFAULT TRUE,
+            ""AllowSchoolSelfEnable"" BOOLEAN NOT NULL DEFAULT FALSE,
+            ""AssignedAt"" TIMESTAMPTZ NOT NULL,
+            ""AssignedBy"" INTEGER,
+            ""Notes"" TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AreaModuleAssignments_AreaId_ModuleId""
+            ON ""AreaModuleAssignments"" (""AreaId"", ""ModuleId"");
+        CREATE INDEX IF NOT EXISTS ""IX_AreaModuleAssignments_ModuleId""
+            ON ""AreaModuleAssignments"" (""ModuleId"");
+    ");
+    Console.WriteLine("[Migration] Gateway shadow properties and AreaModuleAssignments ensured.");
+
     if (!await db.Modules.AnyAsync())
     {
         var now = DateTimeOffset.UtcNow;
