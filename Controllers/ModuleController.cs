@@ -283,10 +283,9 @@ public class ModuleController : ControllerBase
         var bucketName = minioConfig["MinIO:BucketName"] ?? "sbd-main";
         var useSSL = bool.Parse(minioConfig["MinIO:UseSSL"] ?? "false");
 
-        var minio = new Minio.MinioClient()
-            .WithEndpoint(endpoint)
-            .WithCredentials(accessKey, secretKeyVal)
-            .WithSSL(useSSL)
+        var scheme = useSSL ? "https" : "http";
+        var minio = new Minio.MinioClientBuilder($"{scheme}://{endpoint}")
+            .WithStaticCredentials(accessKey, secretKeyVal)
             .Build();
 
         var objectName = $"module-bundles/{module.Code}/{file.FileName}";
