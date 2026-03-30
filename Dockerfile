@@ -4,19 +4,20 @@ EXPOSE 8080
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
-ARG GITHUB_TOKEN
 WORKDIR /src
 
 # Copy project file + NuGet config for restore
 COPY Gateway.csproj nuget.config ./
 
 # Authenticate with GitHub Packages NuGet feed and restore
-RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    sed -i "s/%GITHUB_TOKEN%/$(cat /run/secrets/GITHUB_TOKEN)/g" nuget.config \
     && dotnet restore Gateway.csproj
 
-# Copy all source (overwrites nuget.config with template) and publish
+# Copy all source and publish
 COPY . .
-RUN sed -i "s/%GITHUB_TOKEN%/${GITHUB_TOKEN}/g" nuget.config \
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    sed -i "s/%GITHUB_TOKEN%/$(cat /run/secrets/GITHUB_TOKEN)/g" nuget.config \
     && dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore \
     && rm -f nuget.config
 
