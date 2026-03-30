@@ -26,13 +26,7 @@ public class AreaController : ControllerBase
         var areas = await _context.Areas
             .AsNoTracking()
             .OrderBy(a => a.Code)
-            .Select(a => new AreaListDto
-            {
-                Id = a.Id,
-                Code = a.Code,
-                NameTh = a.NameTh,
-                NameEn = null,
-            })
+            .Select(a => new AreaListDto(a.Id, a.Code, a.NameTh, null))
             .ToListAsync();
 
         return Ok(areas);
@@ -47,13 +41,7 @@ public class AreaController : ControllerBase
         var area = await _context.Areas
             .AsNoTracking()
             .Where(a => a.Id == id)
-            .Select(a => new AreaListDto
-            {
-                Id = a.Id,
-                Code = a.Code,
-                NameTh = a.NameTh,
-                NameEn = null,
-            })
+            .Select(a => new AreaListDto(a.Id, a.Code, a.NameTh, null))
             .FirstOrDefaultAsync();
 
         if (area is null)
@@ -63,10 +51,4 @@ public class AreaController : ControllerBase
     }
 }
 
-public class AreaListDto
-{
-    public int Id { get; set; }
-    public required string Code { get; set; }
-    public required string NameTh { get; set; }
-    public string? NameEn { get; set; }
-}
+public record AreaListDto(int Id, string Code, string NameTh, string? NameEn);
