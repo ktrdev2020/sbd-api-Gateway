@@ -25,7 +25,7 @@ jobs:
           dotnet nuget update source github-ktrdev2020 \
             --configfile nuget.config \
             --username ktrdev2020 \
-            --password ${{ secrets.GITHUB_TOKEN }} \
+            --password ${{ secrets.MAIN_REPO_PAT }} \
             --store-password-in-clear-text
 
       - name: Restore dependencies
