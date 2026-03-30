@@ -11,13 +11,21 @@ COPY Gateway.csproj nuget.config ./
 
 # Authenticate with GitHub Packages NuGet feed and restore
 RUN --mount=type=secret,id=GITHUB_TOKEN \
-    sed -i "s/%GITHUB_TOKEN%/$(cat /run/secrets/GITHUB_TOKEN)/g" nuget.config \
+    dotnet nuget update source github-ktrdev2020 \
+      --configfile nuget.config \
+      --username ktrdev2020 \
+      --password "$(cat /run/secrets/GITHUB_TOKEN)" \
+      --store-password-in-clear-text \
     && dotnet restore Gateway.csproj
 
 # Copy all source and publish
 COPY . .
 RUN --mount=type=secret,id=GITHUB_TOKEN \
-    sed -i "s/%GITHUB_TOKEN%/$(cat /run/secrets/GITHUB_TOKEN)/g" nuget.config \
+    dotnet nuget update source github-ktrdev2020 \
+      --configfile nuget.config \
+      --username ktrdev2020 \
+      --password "$(cat /run/secrets/GITHUB_TOKEN)" \
+      --store-password-in-clear-text \
     && dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore \
     && rm -f nuget.config
 
