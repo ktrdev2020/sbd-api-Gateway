@@ -45,6 +45,6 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            --build-arg GITHUB_TOKEN=${{ secrets.MAIN_REPO_PAT }} \
             -t sbd-gateway:${{ github.sha }} \
             .
