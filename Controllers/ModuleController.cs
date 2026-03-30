@@ -71,7 +71,7 @@ public class ModuleController : ControllerBase
         if (module == null) return NotFound(new { message = "Module not found" });
 
         var schoolCount = await _context.SchoolModules.CountAsync(sm => sm.ModuleId == id);
-        var areaCount = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var areaCount = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .CountAsync(ama => ama.ModuleId == id);
 
         return Ok(new ModuleDetailDto(
@@ -179,7 +179,7 @@ public class ModuleController : ControllerBase
         if (hasSchoolModules)
             return Conflict(new { message = "Cannot delete module that is installed by schools. Remove school installations first." });
 
-        var hasAreaAssignments = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var hasAreaAssignments = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .AnyAsync(ama => ama.ModuleId == id);
         if (hasAreaAssignments)
             return Conflict(new { message = "Cannot delete module that is assigned to areas. Remove area assignments first." });
@@ -200,7 +200,7 @@ public class ModuleController : ControllerBase
         if (!await _context.Modules.AnyAsync(m => m.Id == id))
             return NotFound(new { message = "Module not found" });
 
-        var areaAssignments = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var areaAssignments = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .AsNoTracking()
             .Where(ama => ama.ModuleId == id)
             .Include(ama => ama.Area)
@@ -250,7 +250,7 @@ public class ModuleController : ControllerBase
         if (module == null) return NotFound(new { message = "Module not found" });
 
         var levels = module.VisibilityLevels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var areaCount = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var areaCount = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .CountAsync(ama => ama.ModuleId == id && ama.IsEnabled);
         var schoolCount = await _context.SchoolModules.CountAsync(sm => sm.ModuleId == id && sm.IsEnabled);
 

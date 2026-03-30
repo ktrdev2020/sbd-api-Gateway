@@ -74,7 +74,7 @@ public class SchoolModuleController : ControllerBase
         if (school.AreaId == null)
             return Ok(new List<object>());
 
-        var areaModules = await _context.Set<Gateway.Data.Entities.AreaModuleAssignment>()
+        var areaModules = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .AsNoTracking()
             .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled)
             .Include(ama => ama.Module)
