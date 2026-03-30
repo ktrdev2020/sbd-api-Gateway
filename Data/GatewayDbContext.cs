@@ -1,4 +1,3 @@
-using Gateway.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
@@ -22,7 +21,7 @@ public class GatewayDbContext : SbdDbContext
 {
     public GatewayDbContext(DbContextOptions<SbdDbContext> options) : base(options) { }
 
-    public DbSet<AreaModuleAssignment> AreaModuleAssignments => Set<AreaModuleAssignment>();
+    public new DbSet<AreaModuleAssignment> AreaModuleAssignments => Set<AreaModuleAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
