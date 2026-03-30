@@ -9,7 +9,6 @@ namespace Gateway.Data;
 /// for new Module/SchoolModule fields that will be added to NuGet packages later.
 ///
 /// Strategy:
-/// - AreaModuleAssignment: new local entity (will migrate to SBD.Domain in next NuGet release)
 /// - Module shadow properties: VisibilityLevels, RegistrationType, EntryUrl, BundlePath,
 ///   ConfigJson, Author, License, CreatedAt, UpdatedAt
 /// - SchoolModule shadow properties: Notes, IsPilot
@@ -21,21 +20,9 @@ public class GatewayDbContext : SbdDbContext
 {
     public GatewayDbContext(DbContextOptions<SbdDbContext> options) : base(options) { }
 
-    public new DbSet<AreaModuleAssignment> AreaModuleAssignments => Set<AreaModuleAssignment>();
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
-        // ── AreaModuleAssignment (new entity, local to Gateway) ──
-        modelBuilder.Entity<AreaModuleAssignment>(entity =>
-        {
-            entity.ToTable("AreaModuleAssignments");
-            entity.HasKey(e => e.Id);
-            entity.HasIndex(e => new { e.AreaId, e.ModuleId }).IsUnique();
-            entity.HasOne(e => e.Area).WithMany().HasForeignKey(e => e.AreaId);
-            entity.HasOne(e => e.Module).WithMany().HasForeignKey(e => e.ModuleId);
-        });
 
         // ── Module: shadow properties for new fields not yet in NuGet ──
         // These create DB columns that EF Core manages via EF.Property<T>()
