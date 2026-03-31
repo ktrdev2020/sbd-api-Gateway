@@ -55,7 +55,7 @@ public class UserProfileController : ControllerBase
             ActiveRole: activeRole,
             AreaId: areaRole?.ScopeId?.ToString(),
             SchoolId: schoolRole?.ScopeId?.ToString(),
-            Provider: user.LoginProviders.FirstOrDefault()?.ProviderName ?? "local"
+            Provider: user.LoginProviders.FirstOrDefault()?.Provider ?? "local"
         ));
     }
 }
