@@ -7,13 +7,13 @@ using SBD.Infrastructure.Data;
 namespace Gateway.Controllers;
 
 [ApiController]
-[Route("api/v1/personnel")]
+[Route("api/v1/area/{areaId:int}/personnel")]
 [Authorize]
-public class PersonnelController : ControllerBase
+public class AreaPersonnelController : ControllerBase
 {
     private readonly SbdDbContext _context;
 
-    public PersonnelController(SbdDbContext context)
+    public AreaPersonnelController(SbdDbContext context)
     {
         _context = context;
     }
@@ -23,9 +23,9 @@ public class PersonnelController : ControllerBase
     /// </summary>
     [HttpGet]
     public async Task<ActionResult> GetAll(
-        [FromQuery] int? areaId,
+        int areaId,
         [FromQuery] int? schoolId,
-        [FromQuery] string? type, // Teacher, Director, Staff, AreaOfficer
+        [FromQuery] string? type,
         [FromQuery] string? search,
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 30)
@@ -36,12 +36,9 @@ public class PersonnelController : ControllerBase
                 .ThenInclude(a => a.School)
             .AsQueryable();
 
-        // Filter by area (personnel whose primary school is in this area)
-        if (areaId.HasValue)
-        {
-            query = query.Where(p =>
-                p.SchoolAssignments.Any(a => a.School.AreaId == areaId.Value && a.IsPrimary));
-        }
+        // Filter by area
+        query = query.Where(p =>
+            p.SchoolAssignments.Any(a => a.School.AreaId == areaId && a.IsPrimary));
 
         // Filter by specific school
         if (schoolId.HasValue)
@@ -219,14 +216,13 @@ public class PersonnelController : ControllerBase
 
     /// <summary>Get area-level summary stats.</summary>
     [HttpGet("summary")]
-    public async Task<ActionResult> GetSummary([FromQuery] int? areaId, [FromQuery] int? schoolId)
+    public async Task<ActionResult> GetSummary(int areaId, [FromQuery] int? schoolId)
     {
         var query = _context.PersonnelSchoolAssignments
             .Where(a => a.IsPrimary && (a.EndDate == null || a.EndDate >= DateOnly.FromDateTime(DateTime.Today)))
+            .Where(a => a.School.AreaId == areaId)
             .AsQueryable();
 
-        if (areaId.HasValue)
-            query = query.Where(a => a.School.AreaId == areaId.Value);
         if (schoolId.HasValue)
             query = query.Where(a => a.SchoolId == schoolId.Value);
 
