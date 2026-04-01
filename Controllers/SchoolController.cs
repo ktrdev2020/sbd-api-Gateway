@@ -373,7 +373,6 @@ public class SchoolController : ControllerBase
             } : null,
         };
     }
-}
 
     // ─── Area-scoped endpoints ─────────────────────────────────
 
@@ -495,6 +494,7 @@ public class SchoolController : ControllerBase
 
         return Ok(merged);
     }
+}
 
 // ─── Request / Response Records ──────────────────────────────
 
