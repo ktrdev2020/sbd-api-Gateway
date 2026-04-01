@@ -28,9 +28,12 @@ public class SchoolController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<SchoolListItemDto>>> GetAll(
         [FromQuery] string? search,
+        [FromQuery] int? areaId,
         [FromQuery] string? district,
         [FromQuery] string? subDistrict,
-        [FromQuery] bool? isActive)
+        [FromQuery] bool? isActive,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 50)
     {
         var query = _context.Schools
             .Include(s => s.Area)
@@ -39,6 +42,9 @@ public class SchoolController : ControllerBase
                 .ThenInclude(a => a!.SubDistrict)
                     .ThenInclude(sd => sd.District)
             .AsQueryable();
+
+        if (areaId.HasValue)
+            query = query.Where(s => s.AreaId == areaId.Value);
 
         if (!string.IsNullOrEmpty(search))
             query = query.Where(s => s.NameTh.Contains(search) || s.SchoolCode.Contains(search));
@@ -52,8 +58,12 @@ public class SchoolController : ControllerBase
         if (!string.IsNullOrEmpty(subDistrict))
             query = query.Where(s => s.Address != null && s.Address.SubDistrict.NameTh == subDistrict);
 
+        var total = await query.CountAsync();
+
         var schools = await query
             .OrderBy(s => s.NameTh)
+            .Skip(offset)
+            .Take(limit)
             .Select(s => new SchoolListItemDto(
                 s.Id,
                 s.SchoolCode,
@@ -70,7 +80,7 @@ public class SchoolController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(schools);
+        return Ok(new { data = schools, total, offset, limit });
     }
 
     [HttpGet("{id:int}")]
@@ -365,6 +375,127 @@ public class SchoolController : ControllerBase
     }
 }
 
+    // ─── Area-scoped endpoints ─────────────────────────────────
+
+    /// <summary>Summary statistics for all schools in an area.</summary>
+    [HttpGet("area/{areaId:int}/summary")]
+    public async Task<ActionResult<AreaSchoolsSummaryDto>> GetAreaSummary(int areaId)
+    {
+        var schools = await _context.Schools
+            .Where(s => s.AreaId == areaId)
+            .ToListAsync();
+
+        var districts = await _context.Schools
+            .Where(s => s.AreaId == areaId && s.Address != null)
+            .Include(s => s.Address!.SubDistrict.District)
+            .Select(s => s.Address!.SubDistrict.District.NameTh)
+            .Distinct()
+            .ToListAsync();
+
+        return Ok(new AreaSchoolsSummaryDto(
+            TotalSchools: schools.Count,
+            ActiveSchools: schools.Count(s => s.IsActive),
+            TotalTeachers: schools.Sum(s => s.TeacherCount ?? 0),
+            TotalStudents: schools.Sum(s => s.StudentCount ?? 0),
+            Districts: districts
+        ));
+    }
+
+    /// <summary>Assign a principal to a school (from personnel with Director position).</summary>
+    [HttpPut("{id:int}/principal")]
+    public async Task<ActionResult> AssignPrincipal(int id, [FromBody] AssignPrincipalRequest request)
+    {
+        var school = await _context.Schools.FindAsync(id);
+        if (school == null) return NotFound(new { message = "School not found" });
+
+        if (request.PersonnelId.HasValue)
+        {
+            var personnel = await _context.Personnel.FindAsync(request.PersonnelId.Value);
+            if (personnel == null) return NotFound(new { message = "Personnel not found" });
+
+            var fullName = $"{personnel.FirstName} {personnel.LastName}";
+            school.Principal = fullName;
+
+            // Ensure personnel has school assignment
+            var assignment = await _context.PersonnelSchoolAssignments
+                .FirstOrDefaultAsync(a => a.PersonnelId == request.PersonnelId.Value && a.SchoolId == id);
+
+            if (assignment == null)
+            {
+                _context.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
+                {
+                    PersonnelId = request.PersonnelId.Value,
+                    SchoolId = id,
+                    Position = request.Position ?? "ผู้อำนวยการโรงเรียน",
+                    IsPrimary = true,
+                    StartDate = DateOnly.FromDateTime(DateTime.Today)
+                });
+            }
+            else
+            {
+                assignment.Position = request.Position ?? "ผู้อำนวยการโรงเรียน";
+                assignment.IsPrimary = true;
+            }
+        }
+        else
+        {
+            school.Principal = null;
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok(new { message = "Principal updated", principal = school.Principal });
+    }
+
+    /// <summary>Get personnel eligible to be principal (Director/Acting Director position types).</summary>
+    [HttpGet("area/{areaId:int}/principals")]
+    public async Task<ActionResult> GetEligiblePrincipals(int areaId)
+    {
+        var eligible = await _context.PersonnelSchoolAssignments
+            .Where(a => a.School.AreaId == areaId && (a.EndDate == null || a.EndDate >= DateOnly.FromDateTime(DateTime.Today)))
+            .Where(a => a.Position != null && (
+                a.Position.Contains("ผู้บริหารสถานศึกษา") ||
+                a.Position.Contains("ผู้อำนวยการ") ||
+                a.Position.Contains("รักษาการ")))
+            .Include(a => a.Personnel)
+            .Select(a => new
+            {
+                a.Personnel.Id,
+                a.Personnel.FirstName,
+                a.Personnel.LastName,
+                FullName = a.Personnel.FirstName + " " + a.Personnel.LastName,
+                a.Position,
+                a.Personnel.PersonnelType,
+                CurrentSchoolId = a.SchoolId,
+                CurrentSchoolName = a.School.NameTh
+            })
+            .ToListAsync();
+
+        // Also include personnel with Director type regardless of position text
+        var directors = await _context.Personnel
+            .Where(p => p.PersonnelType == "Director")
+            .Where(p => p.SchoolAssignments.Any(a => a.School.AreaId == areaId && (a.EndDate == null || a.EndDate >= DateOnly.FromDateTime(DateTime.Today))))
+            .Select(p => new
+            {
+                p.Id,
+                p.FirstName,
+                p.LastName,
+                FullName = p.FirstName + " " + p.LastName,
+                Position = p.SchoolAssignments.First().Position ?? "ผู้บริหารสถานศึกษา",
+                p.PersonnelType,
+                CurrentSchoolId = p.SchoolAssignments.First().SchoolId,
+                CurrentSchoolName = p.SchoolAssignments.First().School.NameTh
+            })
+            .ToListAsync();
+
+        var merged = eligible.Concat(directors)
+            .GroupBy(p => p.Id)
+            .Select(g => g.First())
+            .OrderBy(p => p.FullName)
+            .ToList();
+
+        return Ok(merged);
+    }
+
 // ─── Request / Response Records ──────────────────────────────
 
 public record SchoolRequest(
@@ -422,4 +553,17 @@ public record SchoolSummaryDto(
     int TotalTeachers,
     int TotalStudents,
     List<string> Districts
+);
+
+public record AreaSchoolsSummaryDto(
+    int TotalSchools,
+    int ActiveSchools,
+    int TotalTeachers,
+    int TotalStudents,
+    List<string> Districts
+);
+
+public record AssignPrincipalRequest(
+    int? PersonnelId,
+    string? Position
 );
