@@ -475,5 +475,41 @@ public static class SchoolSeedData
             await db.SaveChangesAsync();
             Console.WriteLine($"[Seed] {positions.Length} position types created.");
         }
+
+        // ── Seed AcademicStandingTypes (วิทยฐานะ) ──
+        if (!await db.AcademicStandingTypes.AnyAsync())
+        {
+            var standings = new[]
+            {
+                new AcademicStandingType { Code = "none",          NameTh = "ยังไม่มีวิทยฐานะ",  Level = 0 },
+                new AcademicStandingType { Code = "proficient",    NameTh = "ชำนาญการ",         Level = 1 },
+                new AcademicStandingType { Code = "senior",        NameTh = "ชำนาญการพิเศษ",    Level = 2 },
+                new AcademicStandingType { Code = "expert",        NameTh = "เชี่ยวชาญ",        Level = 3 },
+                new AcademicStandingType { Code = "senior_expert", NameTh = "เชี่ยวชาญพิเศษ",   Level = 4 },
+            };
+            db.AcademicStandingTypes.AddRange(standings);
+            await db.SaveChangesAsync();
+            Console.WriteLine($"[Seed] {standings.Length} academic standing types created.");
+        }
+
+        // ── Seed default work groups for area ──
+        if (!await db.WorkGroups.AnyAsync(w => w.ScopeType == "Area" && w.ScopeId == area.Id))
+        {
+            var areaWorkGroups = new[]
+            {
+                new WorkGroup { Name = "กลุ่มอำนวยการ",              ScopeType = "Area", ScopeId = area.Id, SortOrder = 1, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มนโยบายและแผน",          ScopeType = "Area", ScopeId = area.Id, SortOrder = 2, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มบริหารงานบุคคล",         ScopeType = "Area", ScopeId = area.Id, SortOrder = 3, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มบริหารงานการเงินฯ",      ScopeType = "Area", ScopeId = area.Id, SortOrder = 4, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มนิเทศติดตามฯ",          ScopeType = "Area", ScopeId = area.Id, SortOrder = 5, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มส่งเสริมการจัดการศึกษา",  ScopeType = "Area", ScopeId = area.Id, SortOrder = 6, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่ม ICT",                  ScopeType = "Area", ScopeId = area.Id, SortOrder = 7, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "หน่วยตรวจสอบภายใน",          ScopeType = "Area", ScopeId = area.Id, SortOrder = 8, CreatedAt = DateTimeOffset.UtcNow },
+                new WorkGroup { Name = "กลุ่มกฎหมายและคดี",           ScopeType = "Area", ScopeId = area.Id, SortOrder = 9, CreatedAt = DateTimeOffset.UtcNow },
+            };
+            db.WorkGroups.AddRange(areaWorkGroups);
+            await db.SaveChangesAsync();
+            Console.WriteLine($"[Seed] {areaWorkGroups.Length} area work groups created.");
+        }
     }
 }
