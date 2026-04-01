@@ -1,8 +1,11 @@
+using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Infrastructure.Data;
+using SBD.Messaging.Events;
 using StackExchange.Redis;
+using System.Security.Claims;
 
 namespace Gateway.Controllers;
 
@@ -13,11 +16,13 @@ public class PresenceController : ControllerBase
 {
     private readonly IConnectionMultiplexer _redis;
     private readonly SbdDbContext _db;
+    private readonly IPublishEndpoint _bus;
 
-    public PresenceController(IConnectionMultiplexer redis, SbdDbContext db)
+    public PresenceController(IConnectionMultiplexer redis, SbdDbContext db, IPublishEndpoint bus)
     {
         _redis = redis;
         _db = db;
+        _bus = bus;
     }
 
     /// <summary>Current snapshot: online count + all active session entries from Redis.</summary>
@@ -70,6 +75,29 @@ public class PresenceController : ControllerBase
         return Ok(rows);
     }
 
+    /// <summary>
+    /// Test endpoint: publish a PushNotificationEvent to trigger a real-time notification.
+    /// If UserId and GroupName are both omitted, sends to the calling user.
+    /// </summary>
+    [HttpPost("test-push")]
+    public async Task<ActionResult> TestPush([FromBody] TestPushRequest req)
+    {
+        var userIdClaim = User.FindFirst("sub")?.Value
+                       ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var targetUserId = req.UserId
+                        ?? (int.TryParse(userIdClaim, out var uid) ? uid : (int?)null);
+
+        await _bus.Publish(new PushNotificationEvent(
+            targetUserId,
+            req.GroupName,
+            req.Title,
+            req.Message,
+            req.Type ?? "info",
+            req.ActionUrl));
+
+        return Ok(new { sent = true, targetUserId, groupName = req.GroupName });
+    }
+
     /// <summary>Hourly session count for the last 24 hours (for the trend chart).</summary>
     [HttpGet("stats/hourly")]
     public async Task<ActionResult> GetHourlyStats()
@@ -91,3 +119,11 @@ public class PresenceController : ControllerBase
         return Ok(hourly);
     }
 }
+
+public record TestPushRequest(
+    int? UserId,
+    string? GroupName,
+    string Title,
+    string Message,
+    string? Type,
+    string? ActionUrl);
