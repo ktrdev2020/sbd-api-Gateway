@@ -412,8 +412,7 @@ public class SchoolController : ControllerBase
             var personnel = await _context.Personnel.FindAsync(request.PersonnelId.Value);
             if (personnel == null) return NotFound(new { message = "Personnel not found" });
 
-            var fullName = $"{personnel.FirstName} {personnel.LastName}";
-            school.Principal = fullName;
+            school.Principal = $"{personnel.FirstName} {personnel.LastName}";
 
             // Ensure personnel has school assignment
             var assignment = await _context.PersonnelSchoolAssignments
@@ -434,6 +433,30 @@ public class SchoolController : ControllerBase
             {
                 assignment.Position = request.Position ?? "ผู้อำนวยการโรงเรียน";
                 assignment.IsPrimary = true;
+            }
+
+            // Auto-assign SchoolAdmin role if personnel has a User account
+            if (personnel.UserId.HasValue)
+            {
+                var schoolAdminRole = await _context.Roles.FirstOrDefaultAsync(r => r.Code == "school_admin");
+                if (schoolAdminRole != null)
+                {
+                    var existingRole = await _context.UserRoles
+                        .FirstOrDefaultAsync(ur => ur.UserId == personnel.UserId.Value
+                            && ur.RoleId == schoolAdminRole.Id
+                            && ur.ScopeType == "School" && ur.ScopeId == id);
+                    if (existingRole == null)
+                    {
+                        _context.UserRoles.Add(new UserRole
+                        {
+                            UserId = personnel.UserId.Value,
+                            RoleId = schoolAdminRole.Id,
+                            ScopeType = "School",
+                            ScopeId = id,
+                            AssignedAt = DateTimeOffset.UtcNow
+                        });
+                    }
+                }
             }
         }
         else
