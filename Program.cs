@@ -185,8 +185,22 @@ using (var scope = app.Services.CreateScope())
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_WorkGroupMembers_WorkGroupId_PersonnelId""
             ON ""WorkGroupMembers"" (""WorkGroupId"", ""PersonnelId"");
+
+        -- AcademicStandingTypes table (วิทยฐานะ)
+        CREATE TABLE IF NOT EXISTS ""AcademicStandingTypes"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Code"" VARCHAR(50) NOT NULL,
+            ""NameTh"" VARCHAR(200) NOT NULL,
+            ""NameEn"" VARCHAR(200),
+            ""Level"" INTEGER NOT NULL DEFAULT 0,
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AcademicStandingTypes_Code"" ON ""AcademicStandingTypes"" (""Code"");
+
+        -- WorkGroups: add CreatedAt if missing
+        ALTER TABLE ""WorkGroups"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ");
-    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups ensured.");
+    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups, AcademicStandingTypes ensured.");
 
     if (!await db.Modules.AnyAsync())
     {

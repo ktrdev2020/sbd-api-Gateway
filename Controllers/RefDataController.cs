@@ -110,4 +110,45 @@ public class RefDataController : ControllerBase
         await _cache.SetAsync(cacheKey, data, _cacheExpiration);
         return Ok(data);
     }
+
+    [HttpGet("academic-standings")]
+    public async Task<ActionResult<IEnumerable<AcademicStandingType>>> GetAcademicStandings()
+    {
+        const string cacheKey = "refdata:academic-standings";
+        var cached = await _cache.GetAsync<List<AcademicStandingType>>(cacheKey);
+        if (cached != null)
+            return Ok(cached);
+
+        var data = await _context.AcademicStandingTypes.AsNoTracking()
+            .Where(a => a.IsActive)
+            .OrderBy(a => a.Level)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
+
+    [HttpGet("position-types")]
+    public async Task<ActionResult<IEnumerable<PositionType>>> GetPositionTypes([FromQuery] string? category)
+    {
+        const string cacheKey = "refdata:position-types";
+        var cached = await _cache.GetAsync<List<PositionType>>(cacheKey);
+        if (cached != null)
+        {
+            var filtered = string.IsNullOrEmpty(category)
+                ? cached.Where(p => p.IsActive)
+                : cached.Where(p => p.IsActive && p.Category == category);
+            return Ok(filtered.OrderBy(p => p.SortOrder));
+        }
+
+        var data = await _context.PositionTypes.AsNoTracking()
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.SortOrder)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+
+        var result = string.IsNullOrEmpty(category)
+            ? data
+            : data.Where(p => p.Category == category).ToList();
+        return Ok(result);
+    }
 }
