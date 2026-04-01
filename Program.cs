@@ -199,8 +199,21 @@ using (var scope = app.Services.CreateScope())
 
         -- WorkGroups: add CreatedAt if missing
         ALTER TABLE ""WorkGroups"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+        -- UserSessions table (Presence & Analytics — written by WorkerService via RabbitMQ)
+        CREATE TABLE IF NOT EXISTS ""UserSessions"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""SessionId"" VARCHAR(100) NOT NULL,
+            ""UserId"" INTEGER REFERENCES ""Users""(""Id"") ON DELETE SET NULL,
+            ""IpAddress"" VARCHAR(50),
+            ""ConnectedAt"" TIMESTAMPTZ NOT NULL,
+            ""DisconnectedAt"" TIMESTAMPTZ,
+            ""DurationSeconds"" DOUBLE PRECISION
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_UserSessions_SessionId"" ON ""UserSessions"" (""SessionId"");
+        CREATE INDEX IF NOT EXISTS ""IX_UserSessions_ConnectedAt"" ON ""UserSessions"" (""ConnectedAt"");
     ");
-    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups, AcademicStandingTypes ensured.");
+    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups, AcademicStandingTypes, UserSessions ensured.");
 
     if (!await db.Modules.AnyAsync())
     {
