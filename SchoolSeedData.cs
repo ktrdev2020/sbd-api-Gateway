@@ -449,5 +449,31 @@ public static class SchoolSeedData
 
         await db.SaveChangesAsync();
         Console.WriteLine("[Seed] 196 schools from สพป.ศรีสะเกษ เขต 3 created.");
+
+        // ── Seed PositionTypes ──
+        if (!await db.PositionTypes.AnyAsync())
+        {
+            var positions = new[]
+            {
+                new PositionType { Code = "director",      NameTh = "ผู้อำนวยการสถานศึกษา",     Category = "ผู้บริหาร",    IsSchoolDirector = true,  SortOrder = 1 },
+                new PositionType { Code = "acting_dir",    NameTh = "รักษาการผู้อำนวยการ",       Category = "ผู้บริหาร",    IsSchoolDirector = true,  SortOrder = 2 },
+                new PositionType { Code = "deputy_dir",    NameTh = "รองผู้อำนวยการ",           Category = "ผู้บริหาร",    IsSchoolDirector = false, SortOrder = 3 },
+                new PositionType { Code = "teacher_asst",  NameTh = "ครูผู้ช่วย",               Category = "ครู",         IsSchoolDirector = false, SortOrder = 10 },
+                new PositionType { Code = "teacher_kc1",   NameTh = "ครู คศ.1",                 Category = "ครู",         IsSchoolDirector = false, SortOrder = 11 },
+                new PositionType { Code = "teacher_kc2",   NameTh = "ครู คศ.2 ชำนาญการ",        Category = "ครู",         IsSchoolDirector = false, SortOrder = 12 },
+                new PositionType { Code = "teacher_kc3",   NameTh = "ครู คศ.3 ชำนาญการพิเศษ",   Category = "ครู",         IsSchoolDirector = false, SortOrder = 13 },
+                new PositionType { Code = "teacher_kc4",   NameTh = "ครู คศ.4 เชี่ยวชาญ",       Category = "ครู",         IsSchoolDirector = false, SortOrder = 14 },
+                new PositionType { Code = "teacher_kc5",   NameTh = "ครู คศ.5 เชี่ยวชาญพิเศษ",  Category = "ครู",         IsSchoolDirector = false, SortOrder = 15 },
+                new PositionType { Code = "clerk",         NameTh = "เจ้าหน้าที่ธุรการ",         Category = "เจ้าหน้าที่", IsSchoolDirector = false, SortOrder = 20 },
+                new PositionType { Code = "librarian",     NameTh = "บรรณารักษ์",               Category = "เจ้าหน้าที่", IsSchoolDirector = false, SortOrder = 21 },
+                new PositionType { Code = "janitor",       NameTh = "นักการภารโรง",             Category = "เจ้าหน้าที่", IsSchoolDirector = false, SortOrder = 22 },
+                new PositionType { Code = "security",      NameTh = "ยามรักษาความปลอดภัย",      Category = "เจ้าหน้าที่", IsSchoolDirector = false, SortOrder = 23 },
+                new PositionType { Code = "area_officer",  NameTh = "เจ้าหน้าที่เขตพื้นที่",     Category = "เจ้าหน้าที่เขต", IsSchoolDirector = false, SortOrder = 30 },
+                new PositionType { Code = "area_specialist", NameTh = "ศึกษานิเทศก์",           Category = "เจ้าหน้าที่เขต", IsSchoolDirector = false, SortOrder = 31 },
+            };
+            db.PositionTypes.AddRange(positions);
+            await db.SaveChangesAsync();
+            Console.WriteLine($"[Seed] {positions.Length} position types created.");
+        }
     }
 }
