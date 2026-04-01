@@ -149,8 +149,44 @@ using (var scope = app.Services.CreateScope())
             ON ""AreaModuleAssignments"" (""AreaId"", ""ModuleId"");
         CREATE INDEX IF NOT EXISTS ""IX_AreaModuleAssignments_ModuleId""
             ON ""AreaModuleAssignments"" (""ModuleId"");
+        -- PositionTypes table
+        CREATE TABLE IF NOT EXISTS ""PositionTypes"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Code"" VARCHAR(50) NOT NULL,
+            ""NameTh"" VARCHAR(200) NOT NULL,
+            ""NameEn"" VARCHAR(200),
+            ""Category"" VARCHAR(100) NOT NULL,
+            ""IsSchoolDirector"" BOOLEAN NOT NULL DEFAULT FALSE,
+            ""SortOrder"" INTEGER NOT NULL DEFAULT 0,
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PositionTypes_Code"" ON ""PositionTypes"" (""Code"");
+
+        -- WorkGroups table
+        CREATE TABLE IF NOT EXISTS ""WorkGroups"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Name"" VARCHAR(200) NOT NULL,
+            ""Description"" TEXT,
+            ""ScopeType"" VARCHAR(50) NOT NULL,
+            ""ScopeId"" INTEGER NOT NULL,
+            ""SortOrder"" INTEGER NOT NULL DEFAULT 0,
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_WorkGroups_ScopeType_ScopeId"" ON ""WorkGroups"" (""ScopeType"", ""ScopeId"");
+
+        -- WorkGroupMembers table
+        CREATE TABLE IF NOT EXISTS ""WorkGroupMembers"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""WorkGroupId"" INTEGER NOT NULL REFERENCES ""WorkGroups""(""Id"") ON DELETE CASCADE,
+            ""PersonnelId"" INTEGER NOT NULL REFERENCES ""Personnel""(""Id"") ON DELETE CASCADE,
+            ""Role"" VARCHAR(100),
+            ""StartDate"" DATE,
+            ""EndDate"" DATE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_WorkGroupMembers_WorkGroupId_PersonnelId""
+            ON ""WorkGroupMembers"" (""WorkGroupId"", ""PersonnelId"");
     ");
-    Console.WriteLine("[Migration] Gateway shadow properties and AreaModuleAssignments ensured.");
+    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups ensured.");
 
     if (!await db.Modules.AnyAsync())
     {
