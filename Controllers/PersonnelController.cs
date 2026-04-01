@@ -286,3 +286,4 @@ public record UpdatePersonnelRequest(
     string? Email = null, string? LineId = null,
     string? PersonnelType = null
 );
+// Gateway v1775015381
