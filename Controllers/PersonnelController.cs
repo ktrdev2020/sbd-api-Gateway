@@ -26,6 +26,7 @@ public class AreaPersonnelController : ControllerBase
         int areaId,
         [FromQuery] int? schoolId,
         [FromQuery] string? type,
+        [FromQuery] string? scope,
         [FromQuery] string? search,
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 30)
@@ -39,6 +40,17 @@ public class AreaPersonnelController : ControllerBase
         // Filter by area
         query = query.Where(p =>
             p.SchoolAssignments.Any(a => a.School.AreaId == areaId && a.IsPrimary));
+
+        // Scope: school = has school assignment, area = area officers (no school)
+        if (scope == "school")
+        {
+            query = query.Where(p =>
+                p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolId > 0));
+        }
+        else if (scope == "area")
+        {
+            query = query.Where(p => p.PersonnelType == "Staff" || p.PersonnelType == "AreaOfficer");
+        }
 
         // Filter by specific school
         if (schoolId.HasValue)
