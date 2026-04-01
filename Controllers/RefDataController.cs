@@ -112,7 +112,7 @@ public class RefDataController : ControllerBase
     }
 
     [HttpGet("academic-standings")]
-    public async Task<ActionResult<IEnumerable<AcademicStandingType>>> GetAcademicStandings()
+    public async Task<ActionResult> GetAcademicStandings()
     {
         const string cacheKey = "refdata:academic-standings";
         var cached = await _cache.GetAsync<List<AcademicStandingType>>(cacheKey);
@@ -128,7 +128,7 @@ public class RefDataController : ControllerBase
     }
 
     [HttpGet("position-types")]
-    public async Task<ActionResult<IEnumerable<PositionType>>> GetPositionTypes([FromQuery] string? category)
+    public async Task<ActionResult> GetPositionTypes([FromQuery] string? category)
     {
         const string cacheKey = "refdata:position-types";
         var cached = await _cache.GetAsync<List<PositionType>>(cacheKey);
