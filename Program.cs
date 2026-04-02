@@ -214,6 +214,7 @@ using (var scope = app.Services.CreateScope())
             new SBD.Domain.Entities.Module { Code = "curriculum",      Name = "หลักสูตรสถานศึกษา",  Category = "Feature", Icon = "📚", SortOrder = 10, IsDefault = false, IsEnabled = true, RoutePath = "curriculum", Description = "ระบบเขียนหลักสูตรสถานศึกษา", AssignableToTeacher = true },
             new SBD.Domain.Entities.Module { Code = "attendance",      Name = "ระบบเช็คชื่อ",       Category = "Feature", Icon = "✅", SortOrder = 11, IsDefault = false, IsEnabled = true, RoutePath = "attendance", Description = "บันทึกการเข้าเรียนรายวัน", AssignableToTeacher = true, AssignableToStudent = true },
             new SBD.Domain.Entities.Module { Code = "gradebook",       Name = "สมุดเกรด",           Category = "Feature", Icon = "📝", SortOrder = 12, IsDefault = false, IsEnabled = true, RoutePath = "gradebook",  Description = "บันทึกและคำนวณผลการเรียน", AssignableToTeacher = true, AssignableToStudent = true },
+            new SBD.Domain.Entities.Module { Code = "aplan",          Name = "ระบบแผนปฏิบัติการและงบประมาณประจำปี", Category = "Feature", Icon = "📋", SortOrder = 13, IsDefault = false, IsEnabled = true, RoutePath = "aplan", Description = "บริหารแผนปฏิบัติการประจำปีและงบประมาณ", AssignableToTeacher = false, AssignableToStudent = true },
         };
 
         // Shadow property visibility/registration seed values
@@ -226,6 +227,7 @@ using (var scope = app.Services.CreateScope())
             ["curriculum"] = "teacher,school,area",
             ["attendance"] = "student,teacher,school,area",
             ["gradebook"] = "student,teacher,school,area",
+            ["aplan"] = "student,teacher,school,area",
         };
 
         db.Modules.AddRange(modules);
@@ -242,6 +244,33 @@ using (var scope = app.Services.CreateScope())
 
         await db.SaveChangesAsync();
         Console.WriteLine("[Seed] Default modules created.");
+    }
+
+    // Ensure new feature modules exist (idempotent — runs on every startup)
+    var ensureModules = new (string Code, string Name, string Icon, int SortOrder, string RoutePath, string Description, bool AssignableToTeacher, bool AssignableToStudent, string Visibility)[]
+    {
+        ("ssms",  "ระบบนิเทศการศึกษา",                           "📋", 14, "ssms",  "นิเทศ ติดตาม และประเมินผลการศึกษา",            false, false, "teacher,school,area"),
+        ("sss",   "ระบบดูแลช่วยเหลือนักเรียน",                    "🤝", 15, "sss",   "ระบบดูแลช่วยเหลือนักเรียน",                    true,  true,  "student,teacher,school,area"),
+        ("reqd",  "ระบบวิจัยเพื่อพัฒนาคุณภาพการศึกษา",            "🔬", 16, "reqd",  "การวิจัยเพื่อพัฒนาคุณภาพการศึกษา",             true,  false, "teacher,school,area"),
+        ("aplan", "ระบบแผนปฏิบัติการและงบประมาณประจำปี",           "📋", 17, "aplan", "บริหารแผนปฏิบัติการประจำปีและงบประมาณ",         false, true,  "student,teacher,school,area"),
+    };
+
+    foreach (var m in ensureModules)
+    {
+        if (!await db.Modules.AnyAsync(x => x.Code == m.Code))
+        {
+            var newModule = new SBD.Domain.Entities.Module
+            {
+                Code = m.Code, Name = m.Name, Category = "Feature", Icon = m.Icon,
+                SortOrder = m.SortOrder, IsDefault = false, IsEnabled = true,
+                RoutePath = m.RoutePath, Description = m.Description,
+                AssignableToTeacher = m.AssignableToTeacher, AssignableToStudent = m.AssignableToStudent,
+                VisibilityLevels = m.Visibility, RegistrationType = "internal",
+            };
+            db.Modules.Add(newModule);
+            await db.SaveChangesAsync();
+            Console.WriteLine($"[Seed] Module '{m.Code}' added.");
+        }
     }
 
     // Seed schools from สพป.ศรีสะเกษ เขต 3
