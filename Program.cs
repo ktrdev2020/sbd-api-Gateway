@@ -253,6 +253,8 @@ using (var scope = app.Services.CreateScope())
         ("sss",   "ระบบดูแลช่วยเหลือนักเรียน",                    "🤝", 15, "sss",   "ระบบดูแลช่วยเหลือนักเรียน",                    true,  true,  "student,teacher,school,area"),
         ("reqd",  "ระบบวิจัยเพื่อพัฒนาคุณภาพการศึกษา",            "🔬", 16, "reqd",  "การวิจัยเพื่อพัฒนาคุณภาพการศึกษา",             true,  false, "teacher,school,area"),
         ("aplan", "ระบบแผนปฏิบัติการและงบประมาณประจำปี",           "📋", 17, "aplan", "บริหารแผนปฏิบัติการประจำปีและงบประมาณ",         false, true,  "student,teacher,school,area"),
+        ("edm",   "ระบบงานสารบรรณอิเล็กทรอนิกส์",               "📝", 18, "edm",   "ระบบจัดการเอกสารราชการอิเล็กทรอนิกส์",          true,  false, "teacher,school,area"),
+        ("psnl",  "ระบบบริหารงานบุคคล",                         "👔", 19, "psnl",  "ระบบบริหารงานบุคคลของเขตพื้นที่และโรงเรียน",    true,  true,  "student,teacher,school,area"),
     };
 
     foreach (var m in ensureModules)
