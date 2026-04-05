@@ -28,6 +28,7 @@ public class ApiStatusController : ControllerBase
         ["PersonnelAdminApi"] = "Personnel Admin API",
         ["BudgetApi"] = "Budget API",
         ["GeneralAdminApi"] = "General Admin API",
+        ["QueueApi"] = "Queue Management API",
     };
 
     public ApiStatusController(
