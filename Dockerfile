@@ -9,14 +9,19 @@ WORKDIR /src
 # Copy project file + NuGet config for restore
 COPY Gateway.csproj nuget.config ./
 
-# Authenticate with GitHub Packages NuGet feed and restore
-RUN --mount=type=secret,id=GITHUB_TOKEN \
-    export TOKEN=$(cat /run/secrets/GITHUB_TOKEN) \
-    && dotnet nuget update source github-ktrdev2020 \
-      --configfile nuget.config \
-      --username ktrdev2020 \
-      --password "$TOKEN" \
-      --store-password-in-clear-text \
+# Authenticate with GitHub Packages NuGet feed and restore.
+# Uses Docker BuildKit secret mount for GITHUB_TOKEN.
+# Falls back to ARG-based token if secret mount is unavailable.
+ARG NUGET_AUTH_TOKEN=""
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=false \
+    TOKEN="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || echo "${NUGET_AUTH_TOKEN}")"; \
+    if [ -n "$TOKEN" ]; then \
+      dotnet nuget update source github-ktrdev2020 \
+        --configfile nuget.config \
+        --username ktrdev2020 \
+        --password "$TOKEN" \
+        --store-password-in-clear-text; \
+    fi \
     && dotnet restore Gateway.csproj
 
 # Copy all source and publish
