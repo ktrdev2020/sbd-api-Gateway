@@ -277,6 +277,9 @@ using (var scope = app.Services.CreateScope())
 
     // Seed schools from สพป.ศรีสะเกษ เขต 3
     await Gateway.SchoolSeedData.SeedAsync(db);
+
+    // Seed academic calendar structure
+    await Gateway.AcademicCalendarSeedData.SeedAsync(db);
 }
 
 // Configure the HTTP request pipeline
