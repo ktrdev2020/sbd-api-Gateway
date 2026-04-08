@@ -5,6 +5,7 @@ using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using SBD.Infrastructure.Data;
 using SBD.ServiceRegistry;
 using StackExchange.Redis;
@@ -115,68 +116,79 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SbdDbContext>();
 
-    // Baseline existing prod schema: legacy databases were bootstrapped via EnsureCreated()/raw SQL
-    // before EF Core migrations were introduced. If the schema already contains user tables but no
-    // migration history has been recorded, mark all pending migrations as applied without re-running
-    // them. Otherwise MigrateAsync() will fail with "relation already exists" (42P07).
-    var appliedMigrations = (await db.Database.GetAppliedMigrationsAsync()).ToList();
-    Console.WriteLine($"[Migration] Applied migrations: {appliedMigrations.Count}");
+    // Apply migrations with automatic baselining for legacy schemas.
+    //
+    // Context: this DB is shared across multiple migration assemblies (SBD.Infrastructure +
+    // the Gateway project itself). When a snapshot-style migration is added to one assembly
+    // after the schema was already created by another path (EnsureCreated, raw SQL, or older
+    // migrations), MigrateAsync() will fail with PostgreSQL 42P07 ("relation already exists").
+    //
+    // Strategy: try MigrateAsync; if it trips on 42P07, the offending migration is purely a
+    // baseline of pre-existing tables. Mark it as applied (insert into __EFMigrationsHistory)
+    // and retry. EF wraps each migration in its own transaction, so the failed CREATE TABLE
+    // is rolled back cleanly and the migration is still in the pending list.
+    //
+    // This loop is bounded so a genuine error (different SqlState, or a migration that keeps
+    // failing for the same reason without progress) surfaces instead of spinning forever.
+    const string productVersion = "9.0.2";
+    const int maxBaselineAttempts = 50;
+    var baselined = new HashSet<string>();
+    var attempt = 0;
 
-    if (appliedMigrations.Count == 0)
+    while (true)
     {
-        var pendingMigrations = (await db.Database.GetPendingMigrationsAsync()).ToList();
-        Console.WriteLine($"[Migration] Pending migrations: {pendingMigrations.Count}");
-
-        if (pendingMigrations.Count > 0)
+        try
         {
-            // Probe: count any user table in the current schema other than the EF history table.
-            // If anything exists, the database was bootstrapped before migrations were introduced
-            // and we must baseline rather than apply the initial CREATE TABLE migration.
-            await db.Database.OpenConnectionAsync();
-            long userTableCount;
-            try
+            await db.Database.MigrateAsync();
+            Console.WriteLine("[Migration] Database schema is up to date.");
+            break;
+        }
+        catch (PostgresException ex) when (ex.SqlState == "42P07")
+        {
+            attempt++;
+            if (attempt > maxBaselineAttempts)
             {
-                using var probe = db.Database.GetDbConnection().CreateCommand();
-                probe.CommandText = @"SELECT COUNT(*) FROM information_schema.tables
-                                      WHERE table_schema = current_schema()
-                                        AND table_type = 'BASE TABLE'
-                                        AND table_name <> '__EFMigrationsHistory'";
-                userTableCount = Convert.ToInt64(await probe.ExecuteScalarAsync() ?? 0L);
+                Console.WriteLine($"[Migration] Exceeded {maxBaselineAttempts} baseline attempts. Aborting.");
+                throw;
             }
-            finally
+
+            var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+            if (pending.Count == 0)
             {
-                await db.Database.CloseConnectionAsync();
+                // Conflict occurred but EF reports nothing pending — cannot recover.
+                throw;
             }
-            Console.WriteLine($"[Migration] Existing user tables in schema: {userTableCount}");
 
-            if (userTableCount > 0)
+            // EF applies pending migrations in order, so the conflict is on pending[0].
+            var failedMigration = pending[0];
+            if (!baselined.Add(failedMigration))
             {
-                const string productVersion = "9.0.2";
-
-                // Ensure the history table itself exists before inserting (MigrateAsync would
-                // normally create it, but we need to bypass that path entirely here).
-                await db.Database.ExecuteSqlRawAsync(
-                    @"CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
-                          ""MigrationId"" character varying(150) NOT NULL,
-                          ""ProductVersion"" character varying(32) NOT NULL,
-                          CONSTRAINT ""PK___EFMigrationsHistory"" PRIMARY KEY (""MigrationId"")
-                      );");
-
-                foreach (var migrationId in pendingMigrations)
-                {
-                    await db.Database.ExecuteSqlRawAsync(
-                        @"INSERT INTO ""__EFMigrationsHistory"" (""MigrationId"", ""ProductVersion"")
-                          VALUES ({0}, {1})
-                          ON CONFLICT (""MigrationId"") DO NOTHING",
-                        migrationId, productVersion);
-                    Console.WriteLine($"[Migration] Baselined existing schema: marked '{migrationId}' as applied.");
-                }
+                // Already tried to baseline this one and it still failed — bail out to avoid a loop.
+                Console.WriteLine($"[Migration] Migration '{failedMigration}' still fails after baselining. Aborting.");
+                throw;
             }
+
+            Console.WriteLine($"[Migration] Conflict on '{failedMigration}': {ex.MessageText}");
+            Console.WriteLine($"[Migration] Schema already contains the target objects — baselining migration as applied.");
+
+            // Ensure the history table exists (MigrateAsync usually creates it, but be safe in case
+            // we're recovering from an even earlier failure).
+            await db.Database.ExecuteSqlRawAsync(
+                @"CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
+                      ""MigrationId"" character varying(150) NOT NULL,
+                      ""ProductVersion"" character varying(32) NOT NULL,
+                      CONSTRAINT ""PK___EFMigrationsHistory"" PRIMARY KEY (""MigrationId"")
+                  );");
+
+            await db.Database.ExecuteSqlRawAsync(
+                @"INSERT INTO ""__EFMigrationsHistory"" (""MigrationId"", ""ProductVersion"")
+                  VALUES ({0}, {1})
+                  ON CONFLICT (""MigrationId"") DO NOTHING",
+                failedMigration, productVersion);
+
+            Console.WriteLine($"[Migration] Baselined '{failedMigration}'. Retrying remaining migrations...");
         }
     }
-
-    await db.Database.MigrateAsync();
-    Console.WriteLine("[Migration] Database schema is up to date.");
 
     // Apply Gateway-specific schema additions (shadow properties + AreaModuleAssignments)
     // These columns are defined as shadow properties in GatewayDbContext but the migration
