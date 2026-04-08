@@ -116,34 +116,52 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<SbdDbContext>();
 
     // Baseline existing prod schema: legacy databases were bootstrapped via EnsureCreated()/raw SQL
-    // before EF Core migrations were introduced. If the schema already exists but no migration
-    // history has been recorded, mark all pending migrations as applied without re-running them.
-    // Otherwise MigrateAsync() will fail with "relation already exists" (42P07).
+    // before EF Core migrations were introduced. If the schema already contains user tables but no
+    // migration history has been recorded, mark all pending migrations as applied without re-running
+    // them. Otherwise MigrateAsync() will fail with "relation already exists" (42P07).
     var appliedMigrations = (await db.Database.GetAppliedMigrationsAsync()).ToList();
+    Console.WriteLine($"[Migration] Applied migrations: {appliedMigrations.Count}");
+
     if (appliedMigrations.Count == 0)
     {
         var pendingMigrations = (await db.Database.GetPendingMigrationsAsync()).ToList();
+        Console.WriteLine($"[Migration] Pending migrations: {pendingMigrations.Count}");
+
         if (pendingMigrations.Count > 0)
         {
-            // Probe for a known table from the initial migration. "Schools" is a stable marker —
-            // it has existed since the very first schema bootstrap.
+            // Probe: count any user table in the current schema other than the EF history table.
+            // If anything exists, the database was bootstrapped before migrations were introduced
+            // and we must baseline rather than apply the initial CREATE TABLE migration.
             await db.Database.OpenConnectionAsync();
-            bool legacySchemaExists;
+            long userTableCount;
             try
             {
                 using var probe = db.Database.GetDbConnection().CreateCommand();
                 probe.CommandText = @"SELECT COUNT(*) FROM information_schema.tables
-                                      WHERE table_schema = current_schema() AND table_name = 'Schools'";
-                legacySchemaExists = Convert.ToInt64(await probe.ExecuteScalarAsync() ?? 0L) > 0;
+                                      WHERE table_schema = current_schema()
+                                        AND table_type = 'BASE TABLE'
+                                        AND table_name <> '__EFMigrationsHistory'";
+                userTableCount = Convert.ToInt64(await probe.ExecuteScalarAsync() ?? 0L);
             }
             finally
             {
                 await db.Database.CloseConnectionAsync();
             }
+            Console.WriteLine($"[Migration] Existing user tables in schema: {userTableCount}");
 
-            if (legacySchemaExists)
+            if (userTableCount > 0)
             {
                 const string productVersion = "9.0.2";
+
+                // Ensure the history table itself exists before inserting (MigrateAsync would
+                // normally create it, but we need to bypass that path entirely here).
+                await db.Database.ExecuteSqlRawAsync(
+                    @"CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
+                          ""MigrationId"" character varying(150) NOT NULL,
+                          ""ProductVersion"" character varying(32) NOT NULL,
+                          CONSTRAINT ""PK___EFMigrationsHistory"" PRIMARY KEY (""MigrationId"")
+                      );");
+
                 foreach (var migrationId in pendingMigrations)
                 {
                     await db.Database.ExecuteSqlRawAsync(
