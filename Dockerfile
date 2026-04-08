@@ -9,9 +9,28 @@ WORKDIR /src
 # Copy project file + NuGet config for restore
 COPY Gateway.csproj nuget.config ./
 
+# Cache buster — passed by the CI workflow as a build arg (typically the
+# workflow run number) so that this layer is rebuilt on every workflow run.
+#
+# Why this is needed: Gateway.csproj declares `SBD.Messaging Version="1.0.*"`
+# which resolves the wildcard at restore time. But because the Dockerfile's
+# build context is `apps/dotnet/Gateway` (the submodule itself), nothing in
+# the COPY layer changes when an upstream NuGet package on the registry is
+# republished. Without a per-build cache key, BuildKit happily reuses the
+# cached restore layer that was built against the OLD package, and the
+# subsequent `dotnet publish` fails with type-not-found errors for symbols
+# that exist in the new package but not the cached one.
+#
+# Referencing $CACHE_BUST inside the RUN command makes the value part of
+# the layer hash, so a new build arg => new layer => fresh restore.
+ARG CACHE_BUST=0
+
 # Authenticate with GitHub Packages NuGet feed and restore.
 # Token is passed via Docker BuildKit secret mount (never in image layers).
+# `--force --no-cache` makes dotnet itself re-evaluate the 1.0.* wildcard
+# instead of trusting the local NuGet HTTP cache directory.
 RUN --mount=type=secret,id=GITHUB_TOKEN \
+    echo "Cache bust: $CACHE_BUST"; \
     TOKEN="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null)"; \
     if [ -n "$TOKEN" ]; then \
       dotnet nuget update source github-ktrdev2020 \
@@ -22,7 +41,7 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     else \
       echo "WARNING: No GITHUB_TOKEN secret provided, NuGet restore may fail for private packages"; \
     fi \
-    && dotnet restore Gateway.csproj
+    && dotnet restore Gateway.csproj --force --no-cache
 
 # Copy all source and publish
 COPY . .
