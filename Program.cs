@@ -272,8 +272,106 @@ using (var scope = app.Services.CreateScope())
 
         -- WorkGroups: add CreatedAt if missing
         ALTER TABLE ""WorkGroups"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+        -- ============================================================================
+        -- Academic Calendar tables (from migration 20260406100956_AcademicCalendarStructure)
+        -- These are created idempotently because the migration as a whole was baselined
+        -- (it conflicted with pre-existing tables) but these specific tables were new.
+        -- ============================================================================
+
+        -- FiscalYears (ปีงบประมาณ)
+        CREATE TABLE IF NOT EXISTS ""FiscalYears"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Year"" INTEGER NOT NULL,
+            ""NameTh"" VARCHAR(50) NOT NULL,
+            ""StartDate"" DATE NOT NULL,
+            ""EndDate"" DATE NOT NULL,
+            ""IsActive"" BOOLEAN NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_FiscalYears_Year"" ON ""FiscalYears"" (""Year"");
+
+        -- Terms (ภาคเรียน)
+        CREATE TABLE IF NOT EXISTS ""Terms"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""TermNumber"" INTEGER NOT NULL,
+            ""NameTh"" VARCHAR(50) NOT NULL,
+            ""NameEn"" VARCHAR(50) NOT NULL
+        );
+
+        -- GradeGroups (กลุ่มระดับชั้น)
+        CREATE TABLE IF NOT EXISTS ""GradeGroups"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Code"" VARCHAR(20) NOT NULL,
+            ""NameTh"" VARCHAR(50) NOT NULL,
+            ""SortOrder"" INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_GradeGroups_Code"" ON ""GradeGroups"" (""Code"");
+
+        -- AcademicYears (ปีการศึกษา) — references FiscalYears
+        CREATE TABLE IF NOT EXISTS ""AcademicYears"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Year"" INTEGER NOT NULL,
+            ""NameTh"" VARCHAR(50) NOT NULL,
+            ""FiscalYearStartId"" INTEGER NOT NULL,
+            ""FiscalYearEndId"" INTEGER,
+            ""StartDate"" DATE NOT NULL,
+            ""EndDate"" DATE NOT NULL,
+            ""IsActive"" BOOLEAN NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AcademicYears_Year"" ON ""AcademicYears"" (""Year"");
+        CREATE INDEX IF NOT EXISTS ""IX_AcademicYears_FiscalYearStartId"" ON ""AcademicYears"" (""FiscalYearStartId"");
+        CREATE INDEX IF NOT EXISTS ""IX_AcademicYears_FiscalYearEndId"" ON ""AcademicYears"" (""FiscalYearEndId"");
+        DO $$ BEGIN
+            ALTER TABLE ""AcademicYears""
+                ADD CONSTRAINT ""FK_AcademicYears_FiscalYears_FiscalYearStartId""
+                FOREIGN KEY (""FiscalYearStartId"") REFERENCES ""FiscalYears""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""AcademicYears""
+                ADD CONSTRAINT ""FK_AcademicYears_FiscalYears_FiscalYearEndId""
+                FOREIGN KEY (""FiscalYearEndId"") REFERENCES ""FiscalYears""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- Grades (ระดับชั้น) — references GradeGroups
+        CREATE TABLE IF NOT EXISTS ""Grades"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Code"" VARCHAR(20) NOT NULL,
+            ""NameTh"" VARCHAR(50) NOT NULL,
+            ""GradeGroupId"" INTEGER NOT NULL,
+            ""SortOrder"" INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Grades_Code"" ON ""Grades"" (""Code"");
+        CREATE INDEX IF NOT EXISTS ""IX_Grades_GradeGroupId"" ON ""Grades"" (""GradeGroupId"");
+        DO $$ BEGIN
+            ALTER TABLE ""Grades""
+                ADD CONSTRAINT ""FK_Grades_GradeGroups_GradeGroupId""
+                FOREIGN KEY (""GradeGroupId"") REFERENCES ""GradeGroups""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- AcademicYearTerms (ปีการศึกษา x ภาคเรียน) — references AcademicYears + Terms
+        CREATE TABLE IF NOT EXISTS ""AcademicYearTerms"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""AcademicYearId"" INTEGER NOT NULL,
+            ""TermId"" INTEGER NOT NULL,
+            ""StartDate"" DATE NOT NULL,
+            ""EndDate"" DATE NOT NULL,
+            ""IsActive"" BOOLEAN NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AcademicYearTerms_AcademicYearId_TermId""
+            ON ""AcademicYearTerms"" (""AcademicYearId"", ""TermId"");
+        CREATE INDEX IF NOT EXISTS ""IX_AcademicYearTerms_TermId"" ON ""AcademicYearTerms"" (""TermId"");
+        DO $$ BEGIN
+            ALTER TABLE ""AcademicYearTerms""
+                ADD CONSTRAINT ""FK_AcademicYearTerms_AcademicYears_AcademicYearId""
+                FOREIGN KEY (""AcademicYearId"") REFERENCES ""AcademicYears""(""Id"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""AcademicYearTerms""
+                ADD CONSTRAINT ""FK_AcademicYearTerms_Terms_TermId""
+                FOREIGN KEY (""TermId"") REFERENCES ""Terms""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     ");
-    Console.WriteLine("[Migration] Gateway shadow properties, AreaModuleAssignments, PositionTypes, WorkGroups, AcademicStandingTypes ensured.");
+    Console.WriteLine("[Migration] Gateway shadow properties + academic calendar tables ensured.");
 
     if (!await db.Modules.AnyAsync())
     {
