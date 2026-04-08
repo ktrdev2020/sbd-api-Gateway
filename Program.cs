@@ -74,6 +74,9 @@ builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 // Add MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
 {
+    // Consumers
+    x.AddConsumer<Gateway.Consumers.SchoolLogoUpdatedConsumer>();
+
     x.UsingRabbitMq((context, cfg) =>
     {
         var rabbitUri = builder.Configuration.GetConnectionString("RabbitMQ")
@@ -194,6 +197,13 @@ using (var scope = app.Services.CreateScope())
     // These columns are defined as shadow properties in GatewayDbContext but the migration
     // lives in a different assembly, so we apply them via raw SQL (idempotent).
     await db.Database.ExecuteSqlRawAsync(@"
+        -- School: soft-delete (recycle bin) columns
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""DeletedAt"" TIMESTAMPTZ NULL;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""DeletedBy"" VARCHAR(255) NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Schools_DeletedAt"" ON ""Schools"" (""DeletedAt"");
+        -- School: FileService logo cache (denormalized — kept in sync via SchoolLogoUpdatedConsumer)
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LogoThumbnailUrl"" VARCHAR(1000) NULL;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LogoVersion"" INTEGER NOT NULL DEFAULT 0;
         -- Module: shadow property columns
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""VisibilityLevels"" VARCHAR(200) NOT NULL DEFAULT 'school';
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""RegistrationType"" VARCHAR(50) NOT NULL DEFAULT 'internal';

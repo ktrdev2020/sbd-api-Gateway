@@ -36,6 +36,7 @@ public class SchoolController : ControllerBase
         [FromQuery] int limit = 50)
     {
         var query = _context.Schools
+            .Where(s => s.DeletedAt == null)
             .Include(s => s.Area)
             .Include(s => s.AreaType)
             .Include(s => s.Address)
@@ -76,7 +77,8 @@ public class SchoolController : ControllerBase
                 s.SchoolType,
                 s.IsActive,
                 s.StudentCount,
-                s.TeacherCount
+                s.TeacherCount,
+                s.LogoThumbnailUrl
             ))
             .ToListAsync();
 
@@ -183,6 +185,11 @@ public class SchoolController : ControllerBase
         return Ok(MapToDto(school));
     }
 
+    /// <summary>
+    /// Move a school to the recycle bin (soft delete). The school is hidden
+    /// from normal queries but can be restored. Permanent removal requires a
+    /// separate explicit call to <see cref="PermanentDelete"/>.
+    /// </summary>
     [HttpDelete("{id:int}")]
     public async Task<ActionResult> Delete(int id)
     {
@@ -190,8 +197,109 @@ public class SchoolController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
-        // Soft-delete
-        school.IsActive = false;
+        if (school.DeletedAt != null)
+            return Ok(new { message = "Already in recycle bin", deletedAt = school.DeletedAt });
+
+        school.DeletedAt = DateTimeOffset.UtcNow;
+        school.DeletedBy = User?.Identity?.Name ?? "system";
+        await _context.SaveChangesAsync();
+        await _cache.RemoveAsync(CacheKey);
+
+        return Ok(new
+        {
+            message = "Moved to recycle bin",
+            deletedAt = school.DeletedAt,
+            deletedBy = school.DeletedBy
+        });
+    }
+
+    // ─── Recycle Bin ──────────────────────────────────────────
+
+    /// <summary>List schools currently in the recycle bin (soft-deleted).</summary>
+    [HttpGet("recycle-bin")]
+    public async Task<ActionResult<IEnumerable<RecycledSchoolDto>>> GetRecycleBin(
+        [FromQuery] int? areaId)
+    {
+        var query = _context.Schools
+            .Where(s => s.DeletedAt != null)
+            .Include(s => s.Area)
+            .Include(s => s.Address)
+                .ThenInclude(a => a!.SubDistrict)
+                    .ThenInclude(sd => sd.District)
+            .AsQueryable();
+
+        if (areaId.HasValue)
+            query = query.Where(s => s.AreaId == areaId.Value);
+
+        var items = await query
+            .OrderByDescending(s => s.DeletedAt)
+            .Select(s => new RecycledSchoolDto(
+                s.Id,
+                s.SchoolCode,
+                s.NameTh,
+                s.Principal,
+                s.Address != null && s.Address.SubDistrict != null
+                    ? s.Address.SubDistrict.NameTh
+                    : null,
+                s.Address != null && s.Address.SubDistrict != null && s.Address.SubDistrict.District != null
+                    ? s.Address.SubDistrict.District.NameTh
+                    : null,
+                s.SchoolLevel,
+                s.StudentCount,
+                s.TeacherCount,
+                s.DeletedAt!.Value,
+                s.DeletedBy
+            ))
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>Restore a school from the recycle bin back to live state.</summary>
+    [HttpPost("{id:int}/restore")]
+    public async Task<ActionResult<SchoolDto>> RestoreFromBin(int id)
+    {
+        var school = await _context.Schools.AsTracking()
+            .Include(s => s.Area)
+            .Include(s => s.AreaType)
+            .Include(s => s.Address)
+                .ThenInclude(a => a!.SubDistrict)
+                    .ThenInclude(sd => sd.District)
+                        .ThenInclude(d => d.Province)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        if (school == null)
+            return NotFound(new { message = "School not found" });
+
+        if (school.DeletedAt == null)
+            return BadRequest(new { message = "School is not in the recycle bin" });
+
+        school.DeletedAt = null;
+        school.DeletedBy = null;
+        await _context.SaveChangesAsync();
+        await _cache.RemoveAsync(CacheKey);
+
+        return Ok(MapToDto(school));
+    }
+
+    /// <summary>
+    /// Permanently delete a school. This is destructive and cannot be undone.
+    /// The school must already be in the recycle bin.
+    /// </summary>
+    [HttpDelete("{id:int}/permanent")]
+    public async Task<ActionResult> PermanentDelete(int id)
+    {
+        var school = await _context.Schools.AsTracking().FirstOrDefaultAsync(s => s.Id == id);
+        if (school == null)
+            return NotFound(new { message = "School not found" });
+
+        if (school.DeletedAt == null)
+            return BadRequest(new
+            {
+                message = "School must be in the recycle bin before permanent deletion. Soft-delete first."
+            });
+
+        _context.Schools.Remove(school);
         await _context.SaveChangesAsync();
         await _cache.RemoveAsync(CacheKey);
 
@@ -250,7 +358,7 @@ public class SchoolController : ControllerBase
         [FromQuery] string? district)
     {
         var query = _context.Schools
-            .Where(s => s.IsActive)
+            .Where(s => s.IsActive && s.DeletedAt == null)
             .Include(s => s.Address)
                 .ThenInclude(a => a!.SubDistrict)
                     .ThenInclude(sd => sd.District)
@@ -288,7 +396,7 @@ public class SchoolController : ControllerBase
     public async Task<ActionResult<SchoolDto>> GetPublicById(int id)
     {
         var school = await _context.Schools
-            .Where(s => s.IsActive)
+            .Where(s => s.IsActive && s.DeletedAt == null)
             .Include(s => s.Area)
             .Include(s => s.AreaType)
             .Include(s => s.Address)
@@ -307,7 +415,7 @@ public class SchoolController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<SchoolSummaryDto>> GetPublicSummary()
     {
-        var activeSchools = _context.Schools.Where(s => s.IsActive);
+        var activeSchools = _context.Schools.Where(s => s.IsActive && s.DeletedAt == null);
 
         var summary = new SchoolSummaryDto(
             TotalSchools: await activeSchools.CountAsync(),
@@ -359,6 +467,8 @@ public class SchoolController : ControllerBase
             StudentCount = s.StudentCount,
             TeacherCount = s.TeacherCount,
             LogoUrl = s.LogoUrl,
+            LogoThumbnailUrl = s.LogoThumbnailUrl,
+            LogoVersion = s.LogoVersion,
             Address = s.Address != null ? new AddressDto
             {
                 HouseNumber = s.Address.HouseNumber,
@@ -381,11 +491,11 @@ public class SchoolController : ControllerBase
     public async Task<ActionResult<AreaSchoolsSummaryDto>> GetAreaSummary(int areaId)
     {
         var schools = await _context.Schools
-            .Where(s => s.AreaId == areaId)
+            .Where(s => s.AreaId == areaId && s.DeletedAt == null)
             .ToListAsync();
 
         var districts = await _context.Schools
-            .Where(s => s.AreaId == areaId && s.Address != null)
+            .Where(s => s.AreaId == areaId && s.DeletedAt == null && s.Address != null)
             .Include(s => s.Address!.SubDistrict.District)
             .Select(s => s.Address!.SubDistrict.District.NameTh)
             .Distinct()
@@ -568,7 +678,8 @@ public record SchoolListItemDto(
     string? SchoolType,
     bool IsActive,
     int? StudentCount,
-    int? TeacherCount
+    int? TeacherCount,
+    string? LogoThumbnailUrl
 );
 
 public record SchoolSummaryDto(
@@ -589,4 +700,18 @@ public record AreaSchoolsSummaryDto(
 public record AssignPrincipalRequest(
     int? PersonnelId,
     string? Position
+);
+
+public record RecycledSchoolDto(
+    int Id,
+    string SchoolCode,
+    string NameTh,
+    string? Principal,
+    string? SubDistrictName,
+    string? DistrictName,
+    string? SchoolLevel,
+    int? StudentCount,
+    int? TeacherCount,
+    DateTimeOffset DeletedAt,
+    string? DeletedBy
 );
