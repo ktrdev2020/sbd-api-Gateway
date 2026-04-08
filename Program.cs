@@ -114,6 +114,49 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SbdDbContext>();
+
+    // Baseline existing prod schema: legacy databases were bootstrapped via EnsureCreated()/raw SQL
+    // before EF Core migrations were introduced. If the schema already exists but no migration
+    // history has been recorded, mark all pending migrations as applied without re-running them.
+    // Otherwise MigrateAsync() will fail with "relation already exists" (42P07).
+    var appliedMigrations = (await db.Database.GetAppliedMigrationsAsync()).ToList();
+    if (appliedMigrations.Count == 0)
+    {
+        var pendingMigrations = (await db.Database.GetPendingMigrationsAsync()).ToList();
+        if (pendingMigrations.Count > 0)
+        {
+            // Probe for a known table from the initial migration. "Schools" is a stable marker —
+            // it has existed since the very first schema bootstrap.
+            await db.Database.OpenConnectionAsync();
+            bool legacySchemaExists;
+            try
+            {
+                using var probe = db.Database.GetDbConnection().CreateCommand();
+                probe.CommandText = @"SELECT COUNT(*) FROM information_schema.tables
+                                      WHERE table_schema = current_schema() AND table_name = 'Schools'";
+                legacySchemaExists = Convert.ToInt64(await probe.ExecuteScalarAsync() ?? 0L) > 0;
+            }
+            finally
+            {
+                await db.Database.CloseConnectionAsync();
+            }
+
+            if (legacySchemaExists)
+            {
+                const string productVersion = "9.0.2";
+                foreach (var migrationId in pendingMigrations)
+                {
+                    await db.Database.ExecuteSqlRawAsync(
+                        @"INSERT INTO ""__EFMigrationsHistory"" (""MigrationId"", ""ProductVersion"")
+                          VALUES ({0}, {1})
+                          ON CONFLICT (""MigrationId"") DO NOTHING",
+                        migrationId, productVersion);
+                    Console.WriteLine($"[Migration] Baselined existing schema: marked '{migrationId}' as applied.");
+                }
+            }
+        }
+    }
+
     await db.Database.MigrateAsync();
     Console.WriteLine("[Migration] Database schema is up to date.");
 
