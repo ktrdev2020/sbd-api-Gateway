@@ -384,7 +384,8 @@ public class SchoolController : ControllerBase
                 s.SchoolType,
                 s.IsActive,
                 s.StudentCount,
-                s.TeacherCount
+                s.TeacherCount,
+                s.LogoThumbnailUrl
             ))
             .ToListAsync();
 
