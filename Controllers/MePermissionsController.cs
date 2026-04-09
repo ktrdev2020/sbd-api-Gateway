@@ -222,7 +222,7 @@ public class MePermissionsController : ControllerBase
         var schoolScopeIds = functionalAssignments
             .Where(a => a.ContextScopeType == "School")
             .Select(a => a.ContextScopeId).Distinct().ToList();
-        var schoolNames = schoolScopeIds.Count > 0
+        var faSchoolNames = schoolScopeIds.Count > 0
             ? await _context.Schools.AsNoTracking()
                 .Where(s => schoolScopeIds.Contains(s.Id))
                 .ToDictionaryAsync(s => s.Id, s => s.NameTh, ct)
@@ -230,7 +230,7 @@ public class MePermissionsController : ControllerBase
 
         var functionalDtos = functionalAssignments.Select(a =>
         {
-            var scopeName = a.ContextScopeType == "School" && schoolNames.TryGetValue(a.ContextScopeId, out var sn)
+            var scopeName = a.ContextScopeType == "School" && faSchoolNames.TryGetValue(a.ContextScopeId, out var sn)
                 ? sn : null;
             var caps = a.FunctionalRoleType?.GrantedCapabilitiesJson != null
                 ? System.Text.Json.JsonSerializer.Deserialize<List<string>>(a.FunctionalRoleType.GrantedCapabilitiesJson) ?? new()
