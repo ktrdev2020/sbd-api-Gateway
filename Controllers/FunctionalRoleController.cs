@@ -77,6 +77,18 @@ public class FunctionalRoleController(
             await CreateClient().GetAsync($"{baseUrl}/api/v1/functional-assignments/school/{schoolId}", ct), ct);
     }
 
+    // ── GET /api/v1/functional-assignments/area/{areaId} ─────────────────────
+    [HttpGet("api/v1/functional-assignments/area/{areaId:int}")]
+    [Authorize(Roles = "super_admin,area_admin,SuperAdmin,AreaAdmin")]
+    public async Task<IActionResult> GetAssignmentsForArea(
+        int areaId,
+        CancellationToken ct = default)
+    {
+        var baseUrl = await GetAuthorityBaseUrl();
+        return await ForwardResponse(
+            await CreateClient().GetAsync($"{baseUrl}/api/v1/functional-assignments/area/{areaId}", ct), ct);
+    }
+
     // ── POST /api/v1/functional-assignments ──────────────────────────────────
     [HttpPost("api/v1/functional-assignments")]
     [Authorize(Roles = "super_admin,area_admin,school_admin,SuperAdmin,AreaAdmin,SchoolAdmin")]
