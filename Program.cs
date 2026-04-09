@@ -49,7 +49,10 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidAudience = jwtSettings["Audience"],
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero
+        // Tolerate small clock drift between AuthService and Gateway pods.
+        // Zero skew + containerized clocks = spurious 401s on freshly-minted
+        // tokens. AuthService uses the same 30s tolerance.
+        ClockSkew = TimeSpan.FromSeconds(30)
     };
 });
 
@@ -380,8 +383,143 @@ using (var scope = app.Services.CreateScope())
                 ADD CONSTRAINT ""FK_AcademicYearTerms_Terms_TermId""
                 FOREIGN KEY (""TermId"") REFERENCES ""Terms""(""Id"") ON DELETE RESTRICT;
         EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- ============================================================================
+        -- Phase A.1 — Authority System foundation: Personnel + User extensions
+        -- See docs/architecture/SBD-AUTHORITY-SYSTEM.md
+        -- ============================================================================
+
+        -- Personnel: academic & position metadata for /settings/personnel page
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""PositionTypeId"" INTEGER NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""AcademicStandingTypeId"" INTEGER NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""SubjectArea"" VARCHAR(100) NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""Specialty"" VARCHAR(200) NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMPTZ NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""UpdatedBy"" INTEGER NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Personnel_SubjectArea"" ON ""Personnel"" (""SubjectArea"");
+        DO $$ BEGIN
+            ALTER TABLE ""Personnel""
+                ADD CONSTRAINT ""FK_Personnel_PositionTypes_PositionTypeId""
+                FOREIGN KEY (""PositionTypeId"") REFERENCES ""PositionTypes""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""Personnel""
+                ADD CONSTRAINT ""FK_Personnel_AcademicStandingTypes_AcademicStandingTypeId""
+                FOREIGN KEY (""AcademicStandingTypeId"") REFERENCES ""AcademicStandingTypes""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- User: cross-context personnel resolver (school|area|student|null)
+        -- Named PersonnelContext (not PersonnelType) to avoid collision with the
+        -- existing Personnel.PersonnelType column which has different semantics.
+        ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PersonnelContext"" VARCHAR(20) NULL;
+        ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PersonnelRefId"" INTEGER NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Users_PersonnelContext_PersonnelRefId""
+            ON ""Users"" (""PersonnelContext"", ""PersonnelRefId"")
+            WHERE ""PersonnelContext"" IS NOT NULL;
+
+        -- ============================================================================
+        -- Phase A.1 — Area Personnel (PersonnelAdminApi bounded context)
+        -- Tables prefixed `padm_` to isolate from core domain
+        -- ============================================================================
+
+        CREATE TABLE IF NOT EXISTS ""padm_area_personnel"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""UserId"" INTEGER NULL,
+            ""AreaId"" INTEGER NOT NULL,
+            ""PersonnelCode"" VARCHAR(50) NOT NULL,
+            ""TitlePrefixId"" INTEGER NULL,
+            ""FirstName"" VARCHAR(100) NOT NULL,
+            ""LastName"" VARCHAR(100) NOT NULL,
+            ""IdCard"" VARCHAR(13) NULL,
+            ""PersonnelType"" VARCHAR(50) NOT NULL,
+            ""PositionTypeId"" INTEGER NULL,
+            ""AcademicStandingTypeId"" INTEGER NULL,
+            ""WorkGroup"" VARCHAR(100) NULL,
+            ""Gender"" CHAR(1) NOT NULL DEFAULT 'U',
+            ""BirthDate"" DATE NULL,
+            ""Phone"" VARCHAR(50) NULL,
+            ""Email"" VARCHAR(200) NULL,
+            ""LineId"" VARCHAR(100) NULL,
+            ""Photo"" VARCHAR(1000) NULL,
+            ""AddressId"" INTEGER NULL,
+            ""StartDate"" DATE NULL,
+            ""EndDate"" DATE NULL,
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""CreatedBy"" INTEGER NULL,
+            ""UpdatedAt"" TIMESTAMPTZ NULL,
+            ""UpdatedBy"" INTEGER NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_padm_area_personnel_PersonnelCode""
+            ON ""padm_area_personnel"" (""PersonnelCode"");
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_padm_area_personnel_UserId""
+            ON ""padm_area_personnel"" (""UserId"") WHERE ""UserId"" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_padm_area_personnel_IdCard""
+            ON ""padm_area_personnel"" (""IdCard"");
+        CREATE INDEX IF NOT EXISTS ""IX_padm_area_personnel_AreaId_IsActive""
+            ON ""padm_area_personnel"" (""AreaId"", ""IsActive"");
+        CREATE INDEX IF NOT EXISTS ""IX_padm_area_personnel_WorkGroup""
+            ON ""padm_area_personnel"" (""WorkGroup"");
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel""
+                ADD CONSTRAINT ""FK_padm_area_personnel_Users_UserId""
+                FOREIGN KEY (""UserId"") REFERENCES ""Users""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel""
+                ADD CONSTRAINT ""FK_padm_area_personnel_Areas_AreaId""
+                FOREIGN KEY (""AreaId"") REFERENCES ""Areas""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel""
+                ADD CONSTRAINT ""FK_padm_area_personnel_PositionTypes_PositionTypeId""
+                FOREIGN KEY (""PositionTypeId"") REFERENCES ""PositionTypes""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel""
+                ADD CONSTRAINT ""FK_padm_area_personnel_AcademicStandingTypes_AcademicStandingTypeId""
+                FOREIGN KEY (""AcademicStandingTypeId"") REFERENCES ""AcademicStandingTypes""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        CREATE TABLE IF NOT EXISTS ""padm_area_personnel_educations"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""AreaPersonnelId"" INTEGER NOT NULL,
+            ""Degree"" VARCHAR(200) NOT NULL,
+            ""Major"" VARCHAR(200) NULL,
+            ""Institution"" VARCHAR(300) NULL,
+            ""GraduatedYear"" INTEGER NULL,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""UpdatedAt"" TIMESTAMPTZ NULL
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_padm_area_personnel_educations_AreaPersonnelId""
+            ON ""padm_area_personnel_educations"" (""AreaPersonnelId"");
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel_educations""
+                ADD CONSTRAINT ""FK_padm_area_personnel_educations_padm_area_personnel""
+                FOREIGN KEY (""AreaPersonnelId"") REFERENCES ""padm_area_personnel""(""Id"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        CREATE TABLE IF NOT EXISTS ""padm_area_personnel_certifications"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""AreaPersonnelId"" INTEGER NOT NULL,
+            ""Name"" VARCHAR(300) NOT NULL,
+            ""Issuer"" VARCHAR(300) NULL,
+            ""IssuedDate"" DATE NULL,
+            ""ExpiryDate"" DATE NULL,
+            ""CertificateNo"" VARCHAR(100) NULL,
+            ""AttachmentPath"" VARCHAR(1000) NULL,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""UpdatedAt"" TIMESTAMPTZ NULL
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_padm_area_personnel_certifications_AreaPersonnelId""
+            ON ""padm_area_personnel_certifications"" (""AreaPersonnelId"");
+        DO $$ BEGIN
+            ALTER TABLE ""padm_area_personnel_certifications""
+                ADD CONSTRAINT ""FK_padm_area_personnel_certifications_padm_area_personnel""
+                FOREIGN KEY (""AreaPersonnelId"") REFERENCES ""padm_area_personnel""(""Id"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     ");
-    Console.WriteLine("[Migration] Gateway shadow properties + academic calendar tables ensured.");
+    Console.WriteLine("[Migration] Gateway shadow properties + academic calendar + Authority A.1 tables ensured.");
 
     if (!await db.Modules.AnyAsync())
     {
