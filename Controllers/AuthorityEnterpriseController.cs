@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SBD.ServiceRegistry;
+using Gateway.Filters;
 
 namespace Gateway.Controllers;
 
@@ -96,9 +97,10 @@ public class AuthorityEnterpriseController(
 
     // ── Break-Glass ──────────────────────────────────────────────────────────
 
-    /// <summary>POST /api/v1/break-glass — activate break-glass (SuperAdmin only).</summary>
+    /// <summary>POST /api/v1/break-glass — activate break-glass (SuperAdmin only, fresh JWT required).</summary>
     [HttpPost("api/v1/break-glass")]
     [Authorize(Roles = "super_admin,SuperAdmin")]
+    [RequireStepUp]
     public async Task<IActionResult> ActivateBreakGlass(
         [FromBody] JsonElement body, CancellationToken ct = default)
     {
