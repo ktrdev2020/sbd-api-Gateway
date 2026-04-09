@@ -1,10 +1,12 @@
 using Gateway.Services;
+using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Application.DTOs;
 using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
+using SBD.Messaging.Events;
 
 namespace Gateway.Controllers;
 
@@ -15,12 +17,14 @@ public class SchoolController : ControllerBase
 {
     private readonly SbdDbContext _context;
     private readonly ICacheService _cache;
+    private readonly IPublishEndpoint _publish;
     private const string CacheKey = "refdata:schools";
 
-    public SchoolController(SbdDbContext context, ICacheService cache)
+    public SchoolController(SbdDbContext context, ICacheService cache, IPublishEndpoint publish)
     {
         _context = context;
         _cache = cache;
+        _publish = publish;
     }
 
     // ─── Admin CRUD ───────────────────────────────────────────
@@ -546,7 +550,12 @@ public class SchoolController : ControllerBase
                 assignment.IsPrimary = true;
             }
 
-            // Auto-assign SchoolAdmin role if personnel has a User account
+            // Auto-assign SchoolAdmin role if personnel has a User account.
+            // We track whether a NEW row was inserted so we can publish a
+            // RoleChangedEvent after SaveChanges — AuthService consumes it to
+            // invalidate the user's role cache so their next /auth/refresh
+            // includes the school_admin role without forcing a re-login.
+            (int userId, int roleId, string roleCode, int schoolId)? roleAssigned = null;
             if (personnel.UserId.HasValue)
             {
                 var schoolAdminRole = await _context.Roles.FirstOrDefaultAsync(r => r.Code == "school_admin");
@@ -566,9 +575,29 @@ public class SchoolController : ControllerBase
                             ScopeId = id,
                             AssignedAt = DateTimeOffset.UtcNow
                         });
+                        roleAssigned = (personnel.UserId.Value, schoolAdminRole.Id, schoolAdminRole.Code, id);
                     }
                 }
             }
+
+            await _context.SaveChangesAsync();
+
+            // Publish AFTER SaveChanges succeeds — never publish for a
+            // transaction that didn't commit.
+            if (roleAssigned.HasValue)
+            {
+                var r = roleAssigned.Value;
+                await _publish.Publish(new RoleChangedEvent(
+                    UserId: r.userId,
+                    Username: string.Empty,
+                    RoleId: r.roleId,
+                    RoleCode: r.roleCode,
+                    Action: "assigned",
+                    ScopeId: r.schoolId,
+                    ScopeType: "School"));
+            }
+
+            return Ok(new { message = "Principal updated", principal = school.Principal });
         }
         else
         {

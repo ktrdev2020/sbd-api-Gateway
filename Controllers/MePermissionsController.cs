@@ -208,14 +208,61 @@ public class MePermissionsController : ControllerBase
 
         var grants = await _capabilities.GetActiveGrantsAsync(userId.Value, capV, ct);
 
+        // Phase C.3: load active functional assignments
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var functionalAssignments = await _context.FunctionalAssignments
+            .AsNoTracking()
+            .Include(a => a.FunctionalRoleType)
+            .Where(a => a.UserId == userId.Value
+                     && a.RevokedAt == null
+                     && (a.EndDate == null || a.EndDate >= today))
+            .ToListAsync(ct);
+
+        // Resolve scope display names for assignments
+        var schoolScopeIds = functionalAssignments
+            .Where(a => a.ContextScopeType == "School")
+            .Select(a => a.ContextScopeId).Distinct().ToList();
+        var schoolNames = schoolScopeIds.Count > 0
+            ? await _context.Schools.AsNoTracking()
+                .Where(s => schoolScopeIds.Contains(s.Id))
+                .ToDictionaryAsync(s => s.Id, s => s.NameTh, ct)
+            : new Dictionary<int, string>();
+
+        var functionalDtos = functionalAssignments.Select(a =>
+        {
+            var scopeName = a.ContextScopeType == "School" && schoolNames.TryGetValue(a.ContextScopeId, out var sn)
+                ? sn : null;
+            var caps = a.FunctionalRoleType?.GrantedCapabilitiesJson != null
+                ? System.Text.Json.JsonSerializer.Deserialize<List<string>>(a.FunctionalRoleType.GrantedCapabilitiesJson) ?? new()
+                : new List<string>();
+            return new FunctionalAssignmentDto
+            {
+                Id               = a.Id,
+                RoleCode         = a.FunctionalRoleType?.Code ?? "",
+                RoleNameTh       = a.FunctionalRoleType?.NameTh ?? "",
+                Category         = a.FunctionalRoleType?.Category ?? "",
+                ContextScope     = a.FunctionalRoleType?.ContextScope ?? "",
+                ContextScopeType = a.ContextScopeType,
+                ContextScopeId   = a.ContextScopeId,
+                ContextScopeName = scopeName,
+                StartDate        = a.StartDate,
+                EndDate          = a.EndDate,
+                AssignedByUserId = a.AssignedByUserId,
+                AssignedAt       = a.AssignedAt,
+                OrderRef         = a.OrderRef,
+                GrantedCapabilities = caps,
+            };
+        }).ToList();
+
         return Ok(new PermissionsMeDto
         {
-            ActiveRole = activeRole,
-            Roles = roleAssignments,
-            Modules = modules.OrderBy(m => m.Code).ToList(),
-            SelfEditPolicies = policies,
-            Grants = grants.ToList(),
-            CapVersion = capV,
+            ActiveRole            = activeRole,
+            Roles                 = roleAssignments,
+            Modules               = modules.OrderBy(m => m.Code).ToList(),
+            SelfEditPolicies      = policies,
+            Grants                = grants.ToList(),
+            CapVersion            = capV,
+            FunctionalAssignments = functionalDtos,
         });
     }
 }
