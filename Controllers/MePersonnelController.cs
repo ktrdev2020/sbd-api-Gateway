@@ -53,6 +53,11 @@ public class MePersonnelController : ControllerBase
         ?? Environment.GetEnvironmentVariable("PERSONNEL_ADMIN_API_URL")
         ?? "http://localhost:5031";
 
+    private string StudentApiBase =>
+        _config["ServiceUrls:StudentApi"]
+        ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
+        ?? "http://localhost:5032";
+
     private int? CurrentUserId
     {
         get
@@ -78,6 +83,7 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: $"/api/v1/personnel/by-user/{userId}",
             areaPath: $"/api/v1/area-personnel/by-user/{userId}",
+            studentPath: $"/api/v1/student/by-user/{userId}",
             method: HttpMethod.Get,
             body: null,
             ct);
@@ -100,12 +106,13 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: "/api/v1/personnel/me/self",
             areaPath: "/api/v1/area-personnel/me/self",
+            studentPath: "/api/v1/student/me/self",
             method: HttpMethod.Patch,
             body: body.GetRawText(),
             ct);
     }
 
-    /// <summary>GET /api/v1/me/personnel/educations — list user's educations</summary>
+    /// <summary>GET /api/v1/me/personnel/educations — list user's educations (school/area context only)</summary>
     [HttpGet("personnel/educations")]
     public async Task<IActionResult> ListEducations(CancellationToken ct)
     {
@@ -117,6 +124,7 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: "/api/v1/personnel/me/educations",
             areaPath: "/api/v1/area-personnel/me/educations",
+            studentPath: null,
             method: HttpMethod.Get,
             body: null,
             ct);
@@ -134,6 +142,7 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: "/api/v1/personnel/me/educations",
             areaPath: "/api/v1/area-personnel/me/educations",
+            studentPath: null,
             method: HttpMethod.Post,
             body: body.GetRawText(),
             ct);
@@ -151,6 +160,7 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: $"/api/v1/personnel/me/educations/{eduId}",
             areaPath: $"/api/v1/area-personnel/me/educations/{eduId}",
+            studentPath: null,
             method: HttpMethod.Put,
             body: body.GetRawText(),
             ct);
@@ -167,9 +177,48 @@ public class MePersonnelController : ControllerBase
             context,
             schoolPath: $"/api/v1/personnel/me/educations/{eduId}",
             areaPath: $"/api/v1/area-personnel/me/educations/{eduId}",
+            studentPath: null,
             method: HttpMethod.Delete,
             body: null,
             ct);
+    }
+
+    // ─── Student-specific sub-routes ─────────────────────────────────────
+
+    /// <summary>GET /api/v1/me/student/academics — student's academic records (student context only)</summary>
+    [HttpGet("student/academics")]
+    public async Task<IActionResult> ListStudentAcademics(CancellationToken ct)
+    {
+        var userId = CurrentUserId;
+        if (userId == null) return Unauthorized();
+
+        var (context, _) = await ResolveContextAsync(userId.Value, ct);
+        if (context != "student") return Forbid();
+        return await ForwardToStudentApiAsync("/api/v1/student/me/academics", HttpMethod.Get, null, ct);
+    }
+
+    /// <summary>GET /api/v1/me/student/activities — student's activities (student context only)</summary>
+    [HttpGet("student/activities")]
+    public async Task<IActionResult> ListStudentActivities(CancellationToken ct)
+    {
+        var userId = CurrentUserId;
+        if (userId == null) return Unauthorized();
+
+        var (context, _) = await ResolveContextAsync(userId.Value, ct);
+        if (context != "student") return Forbid();
+        return await ForwardToStudentApiAsync("/api/v1/student/me/activities", HttpMethod.Get, null, ct);
+    }
+
+    /// <summary>GET /api/v1/me/student/health — student's health records (student context only)</summary>
+    [HttpGet("student/health")]
+    public async Task<IActionResult> ListStudentHealth(CancellationToken ct)
+    {
+        var userId = CurrentUserId;
+        if (userId == null) return Unauthorized();
+
+        var (context, _) = await ResolveContextAsync(userId.Value, ct);
+        if (context != "student") return Forbid();
+        return await ForwardToStudentApiAsync("/api/v1/student/me/health", HttpMethod.Get, null, ct);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -192,6 +241,7 @@ public class MePersonnelController : ControllerBase
         string? context,
         string schoolPath,
         string areaPath,
+        string? studentPath,
         HttpMethod method,
         string? body,
         CancellationToken ct)
@@ -211,7 +261,9 @@ public class MePersonnelController : ControllerBase
                 path = areaPath;
                 break;
             case "student":
-                return StatusCode(501, new { message = "Student personnel endpoint not yet implemented (Phase D)" });
+                if (studentPath == null)
+                    return StatusCode(501, new { message = "Endpoint not applicable for student context" });
+                return await ForwardToStudentApiAsync(studentPath, method, body, ct);
             default:
                 return BadRequest(new { message = $"Unknown PersonnelContext '{context}'" });
         }
@@ -233,6 +285,29 @@ public class MePersonnelController : ControllerBase
         {
             _logger.LogError(ex, "[MePersonnel] Forward {Method} {Path} to {BaseUrl} failed", method, path, baseUrl);
             return StatusCode(503, new { message = $"Personnel service unavailable ({context})" });
+        }
+    }
+
+    private async Task<IActionResult> ForwardToStudentApiAsync(
+        string path, HttpMethod method, string? body, CancellationToken ct)
+    {
+        var http = _httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
+
+        var req = new HttpRequestMessage(method, $"{StudentApiBase}{path}");
+        if (body != null)
+            req.Content = new StringContent(body, Encoding.UTF8, "application/json");
+        ForwardAuth(req);
+
+        try
+        {
+            var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            return await ForwardResponse(resp, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MePersonnel] Forward {Method} {Path} to StudentApi failed", method, path);
+            return StatusCode(503, new { message = "Student service unavailable" });
         }
     }
 

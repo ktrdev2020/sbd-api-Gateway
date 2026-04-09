@@ -662,6 +662,144 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Authority B.1 tables (authz_*) ensured.");
 
+    // ── Phase D — Enterprise Hardening: authz_jit_*, authz_recertification_*, user_risk_scores ─
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- D.2: JIT Elevations — temporary capability grants (max 8h TTL)
+        CREATE TABLE IF NOT EXISTS ""authz_jit_elevations"" (
+            ""Id""                  BIGSERIAL PRIMARY KEY,
+            ""UserId""              INTEGER NOT NULL REFERENCES ""Users""(""Id"") ON DELETE CASCADE,
+            ""CapabilityCode""      VARCHAR(200) NOT NULL,
+            ""ScopeType""           VARCHAR(50)  NOT NULL,
+            ""ScopeId""             INTEGER,
+            ""GrantedByUserId""     INTEGER NOT NULL,
+            ""Reason""              VARCHAR(1000) NOT NULL,
+            ""GrantedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""ExpiresAt""           TIMESTAMPTZ NOT NULL,
+            ""RevokedAt""           TIMESTAMPTZ,
+            ""RevokedByUserId""     INTEGER,
+            ""RevokeReason""        VARCHAR(200)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_jit_user_active""
+            ON ""authz_jit_elevations"" (""UserId"", ""CapabilityCode"")
+            WHERE ""RevokedAt"" IS NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_authz_jit_expires""
+            ON ""authz_jit_elevations"" (""ExpiresAt"")
+            WHERE ""RevokedAt"" IS NULL;
+
+        -- D.4: Recertification campaigns
+        CREATE TABLE IF NOT EXISTS ""authz_recertification_campaigns"" (
+            ""Id""          BIGSERIAL PRIMARY KEY,
+            ""Name""        VARCHAR(300) NOT NULL,
+            ""StartedAt""   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""StartedBy""   INTEGER NOT NULL,
+            ""Deadline""    DATE NOT NULL,
+            ""Status""      VARCHAR(20) NOT NULL DEFAULT 'active',
+            ""CompletedAt"" TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_recert_campaigns_status""
+            ON ""authz_recertification_campaigns"" (""Status"");
+
+        -- D.4: Recertification items (one per grant in campaign)
+        CREATE TABLE IF NOT EXISTS ""authz_recertification_items"" (
+            ""Id""              BIGSERIAL PRIMARY KEY,
+            ""CampaignId""      BIGINT NOT NULL REFERENCES ""authz_recertification_campaigns""(""Id"") ON DELETE CASCADE,
+            ""GrantId""         BIGINT NOT NULL REFERENCES ""authz_capability_grants""(""Id"") ON DELETE CASCADE,
+            ""GranteeUserId""   INTEGER NOT NULL,
+            ""ReviewerUserId""  INTEGER,
+            ""Status""          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            ""ReviewedAt""      TIMESTAMPTZ,
+            ""ReviewNote""      VARCHAR(1000)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_recert_items_campaign_status""
+            ON ""authz_recertification_items"" (""CampaignId"", ""Status"");
+        CREATE INDEX IF NOT EXISTS ""IX_authz_recert_items_grant""
+            ON ""authz_recertification_items"" (""GrantId"");
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_authz_recert_items_campaign_grant""
+            ON ""authz_recertification_items"" (""CampaignId"", ""GrantId"");
+
+        -- D.6: User risk scores — refreshed periodically by WorkerService
+        CREATE TABLE IF NOT EXISTS ""user_risk_scores"" (
+            ""UserId""          INTEGER PRIMARY KEY REFERENCES ""Users""(""Id"") ON DELETE CASCADE,
+            ""Score""           INTEGER NOT NULL DEFAULT 0,
+            ""Level""           VARCHAR(20) NOT NULL DEFAULT 'low',
+            ""FactorsJson""     JSONB NOT NULL DEFAULT '[]'::jsonb,
+            ""LastScoredAt""    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_user_risk_scores_level""
+            ON ""user_risk_scores"" (""Level"");
+    ");
+    Console.WriteLine("[Migration] Phase D enterprise tables (authz_jit_*, authz_recertification_*, user_risk_scores) ensured.");
+
+    // ── Phase D.1 — StudentApi bounded context tables ────────────────────────
+    // StudentProfile + sub-tables. StudentApi reads these directly via SbdDbContext.
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- StudentProfile (main record, linked to Personnel + User)
+        CREATE TABLE IF NOT EXISTS ""StudentProfiles"" (
+            ""Id""                   SERIAL PRIMARY KEY,
+            ""PersonnelId""          INTEGER NOT NULL REFERENCES ""Personnel""(""Id"") ON DELETE RESTRICT,
+            ""StudentCode""          VARCHAR(50) NOT NULL,
+            ""Status""               VARCHAR(30) NOT NULL DEFAULT 'active',
+            ""SchoolId""             INTEGER REFERENCES ""Schools""(""Id"") ON DELETE RESTRICT,
+            ""EnrollYear""           INTEGER,
+            ""GraduateYear""         INTEGER,
+            ""GradeLevel""           VARCHAR(20),
+            ""Classroom""            VARCHAR(50),
+            ""AdvisorId""            INTEGER REFERENCES ""Personnel""(""Id"") ON DELETE SET NULL,
+            ""Nationality""          VARCHAR(100),
+            ""Religion""             VARCHAR(100),
+            ""DisabilityType""       VARCHAR(100),
+            ""IsDisadvantaged""      BOOLEAN NOT NULL DEFAULT FALSE,
+            ""DistanceToSchoolKm""   NUMERIC(6,1),
+            ""ParentName""           VARCHAR(200),
+            ""ParentPhone""          VARCHAR(50),
+            ""ParentRelation""       VARCHAR(100),
+            ""CreatedAt""            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""UpdatedAt""            TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_StudentCode"" ON ""StudentProfiles"" (""StudentCode"");
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_PersonnelId"" ON ""StudentProfiles"" (""PersonnelId"");
+        CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_SchoolId"" ON ""StudentProfiles"" (""SchoolId"");
+        CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_Status"" ON ""StudentProfiles"" (""Status"");
+
+        -- StudentAcademics (academic records per year+semester)
+        CREATE TABLE IF NOT EXISTS ""StudentAcademics"" (
+            ""Id""           SERIAL PRIMARY KEY,
+            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
+            ""AcademicYear"" INTEGER NOT NULL,
+            ""Semester""     INTEGER NOT NULL,
+            ""Gpa""          NUMERIC(4,2),
+            ""SubjectGrades"" JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentAcademics_Profile_Year_Sem""
+            ON ""StudentAcademics"" (""StudentProfileId"", ""AcademicYear"", ""Semester"");
+
+        -- StudentActivities (extra-curricular / honors)
+        CREATE TABLE IF NOT EXISTS ""StudentActivities"" (
+            ""Id""               SERIAL PRIMARY KEY,
+            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
+            ""Type""             VARCHAR(50) NOT NULL,
+            ""Title""            VARCHAR(500) NOT NULL,
+            ""ActivityDate""     DATE NOT NULL,
+            ""AttachmentPath""   VARCHAR(1000)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_StudentActivities_ProfileId"" ON ""StudentActivities"" (""StudentProfileId"");
+
+        -- StudentHealthRecords (physical health per term)
+        CREATE TABLE IF NOT EXISTS ""StudentHealthRecords"" (
+            ""Id""               SERIAL PRIMARY KEY,
+            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
+            ""AcademicYear""     INTEGER NOT NULL,
+            ""Term""             INTEGER NOT NULL,
+            ""RecordDate""       DATE NOT NULL,
+            ""WeightKg""         NUMERIC(5,1),
+            ""HeightCm""         NUMERIC(5,1),
+            ""Bmi""              NUMERIC(4,1),
+            ""HealthStatus""     VARCHAR(100)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_StudentHealthRecords_ProfileId"" ON ""StudentHealthRecords"" (""StudentProfileId"");
+    ");
+    Console.WriteLine("[Migration] Phase D.1 StudentProfile tables ensured.");
+
     if (!await db.Modules.AnyAsync())
     {
         var now = DateTimeOffset.UtcNow;
