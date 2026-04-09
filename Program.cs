@@ -521,6 +521,144 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Gateway shadow properties + academic calendar + Authority A.1 tables ensured.");
 
+    // ── Phase B.1 — Authority System: authz_* tables ─────────────────────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- CapabilityDefinition: catalog of all system + module capabilities
+        CREATE TABLE IF NOT EXISTS ""authz_capability_definitions"" (
+            ""Id""                  SERIAL PRIMARY KEY,
+            ""Code""                VARCHAR(200) NOT NULL,
+            ""Module""              VARCHAR(100) NOT NULL,
+            ""Resource""            VARCHAR(100) NOT NULL,
+            ""Action""              VARCHAR(100) NOT NULL,
+            ""NameTh""              VARCHAR(300) NOT NULL,
+            ""Description""         VARCHAR(1000),
+            ""DefaultScope""        VARCHAR(50)  NOT NULL,
+            ""IsRedelegatable""     BOOLEAN NOT NULL DEFAULT TRUE,
+            ""MaxDelegationDepth""  INTEGER NOT NULL DEFAULT 5,
+            ""IsDangerous""         BOOLEAN NOT NULL DEFAULT FALSE,
+            ""RequiresApproval""    BOOLEAN NOT NULL DEFAULT FALSE,
+            ""IsActive""            BOOLEAN NOT NULL DEFAULT TRUE,
+            ""CreatedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_authz_cap_def_code""
+            ON ""authz_capability_definitions"" (""Code"");
+
+        -- CapabilityGrant: individual grant records with delegation chain
+        CREATE TABLE IF NOT EXISTS ""authz_capability_grants"" (
+            ""Id""                  BIGSERIAL PRIMARY KEY,
+            ""GranteeUserId""       INTEGER NOT NULL,
+            ""CapabilityCode""      VARCHAR(200) NOT NULL,
+            ""ScopeType""           VARCHAR(50)  NOT NULL,
+            ""ScopeId""             INTEGER,
+            ""GrantedByUserId""     INTEGER NOT NULL,
+            ""ParentGrantId""       BIGINT REFERENCES ""authz_capability_grants""(""Id"") ON DELETE RESTRICT,
+            ""RedelegationDepth""   INTEGER NOT NULL DEFAULT 0,
+            ""CanRedelegate""       BOOLEAN NOT NULL DEFAULT FALSE,
+            ""RemainingDepth""      INTEGER NOT NULL DEFAULT 0,
+            ""ExpiresAt""           DATE,
+            ""ConditionsJson""      JSONB,
+            ""GrantedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""GrantReason""         VARCHAR(500),
+            ""OrderRef""            VARCHAR(100),
+            ""RevokedAt""           TIMESTAMPTZ,
+            ""RevokedByUserId""     INTEGER,
+            ""RevokeReason""        VARCHAR(500)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_grants_grantee_cap_scope""
+            ON ""authz_capability_grants"" (""GranteeUserId"", ""CapabilityCode"", ""ScopeType"", ""ScopeId"");
+        CREATE INDEX IF NOT EXISTS ""IX_authz_grants_parent""
+            ON ""authz_capability_grants"" (""ParentGrantId"") WHERE ""ParentGrantId"" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_authz_grants_expires""
+            ON ""authz_capability_grants"" (""ExpiresAt"") WHERE ""ExpiresAt"" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_authz_grants_active""
+            ON ""authz_capability_grants"" (""GranteeUserId"") WHERE ""RevokedAt"" IS NULL;
+
+        -- FunctionalRoleType: catalog of functional roles (หน้าที่)
+        CREATE TABLE IF NOT EXISTS ""authz_functional_role_types"" (
+            ""Id""                       SERIAL PRIMARY KEY,
+            ""Code""                     VARCHAR(100) NOT NULL,
+            ""NameTh""                   VARCHAR(200) NOT NULL,
+            ""Category""                 VARCHAR(50)  NOT NULL,
+            ""ContextScope""             VARCHAR(50)  NOT NULL,
+            ""GrantedCapabilitiesJson""  JSONB NOT NULL DEFAULT '[]'::jsonb,
+            ""CanBeAssignedByJson""      JSONB,
+            ""IsSystem""                 BOOLEAN NOT NULL DEFAULT FALSE,
+            ""IsActive""                 BOOLEAN NOT NULL DEFAULT TRUE,
+            ""CreatedAt""                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_authz_func_role_code""
+            ON ""authz_functional_role_types"" (""Code"");
+
+        -- FunctionalAssignment: user → functional role at a context scope
+        CREATE TABLE IF NOT EXISTS ""authz_functional_assignments"" (
+            ""Id""                   BIGSERIAL PRIMARY KEY,
+            ""UserId""               INTEGER NOT NULL,
+            ""FunctionalRoleTypeId"" INTEGER NOT NULL REFERENCES ""authz_functional_role_types""(""Id"") ON DELETE RESTRICT,
+            ""ContextScopeType""     VARCHAR(50) NOT NULL,
+            ""ContextScopeId""       INTEGER NOT NULL,
+            ""StartDate""            DATE NOT NULL,
+            ""EndDate""              DATE,
+            ""AssignedByUserId""     INTEGER NOT NULL,
+            ""AssignedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""OrderRef""             VARCHAR(100),
+            ""RevokedAt""            TIMESTAMPTZ,
+            ""RevokedByUserId""      INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_func_assign_user_role_scope""
+            ON ""authz_functional_assignments"" (""UserId"", ""FunctionalRoleTypeId"", ""ContextScopeType"", ""ContextScopeId"");
+        CREATE INDEX IF NOT EXISTS ""IX_authz_func_assign_enddate""
+            ON ""authz_functional_assignments"" (""EndDate"") WHERE ""EndDate"" IS NOT NULL;
+
+        -- GrantAuditLog: immutable append-only audit trail with hash chain
+        CREATE TABLE IF NOT EXISTS ""authz_grant_audit_logs"" (
+            ""Id""              BIGSERIAL PRIMARY KEY,
+            ""OccurredAt""      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""ActorUserId""     INTEGER NOT NULL,
+            ""Action""          VARCHAR(50) NOT NULL,
+            ""TargetUserId""    INTEGER,
+            ""CapabilityCode""  VARCHAR(200),
+            ""ScopeType""       VARCHAR(50),
+            ""ScopeId""         INTEGER,
+            ""GrantId""         BIGINT,
+            ""Reason""          VARCHAR(500),
+            ""IpAddress""       VARCHAR(50),
+            ""MetadataJson""    JSONB,
+            ""PrevLogHash""     VARCHAR(64),
+            ""ThisLogHash""     VARCHAR(64) NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_audit_occurred""
+            ON ""authz_grant_audit_logs"" (""OccurredAt"");
+        CREATE INDEX IF NOT EXISTS ""IX_authz_audit_actor""
+            ON ""authz_grant_audit_logs"" (""ActorUserId"");
+        CREATE INDEX IF NOT EXISTS ""IX_authz_audit_grant""
+            ON ""authz_grant_audit_logs"" (""GrantId"") WHERE ""GrantId"" IS NOT NULL;
+
+        -- Prevent UPDATE and DELETE on audit log (tamper-evident)
+        DO $$ BEGIN
+            CREATE RULE ""authz_audit_no_update"" AS ON UPDATE TO ""authz_grant_audit_logs"" DO INSTEAD NOTHING;
+            CREATE RULE ""authz_audit_no_delete"" AS ON DELETE TO ""authz_grant_audit_logs"" DO INSTEAD NOTHING;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- GrantApprovalRequest: approval workflow for dangerous capabilities
+        CREATE TABLE IF NOT EXISTS ""authz_grant_approval_requests"" (
+            ""Id""                       BIGSERIAL PRIMARY KEY,
+            ""RequesterUserId""          INTEGER NOT NULL,
+            ""TargetUserId""             INTEGER NOT NULL,
+            ""CapabilityDefinitionId""   INTEGER NOT NULL REFERENCES ""authz_capability_definitions""(""Id"") ON DELETE RESTRICT,
+            ""ScopeType""                VARCHAR(50) NOT NULL,
+            ""ScopeId""                  INTEGER,
+            ""Reason""                   VARCHAR(1000),
+            ""RequestedAt""              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""Status""                   VARCHAR(20) NOT NULL DEFAULT 'pending',
+            ""ApprovedByUserId""         INTEGER,
+            ""ApprovedAt""               TIMESTAMPTZ,
+            ""ApprovalNote""             VARCHAR(1000)
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_authz_approval_status_requester""
+            ON ""authz_grant_approval_requests"" (""Status"", ""RequesterUserId"");
+    ");
+    Console.WriteLine("[Migration] Authority B.1 tables (authz_*) ensured.");
+
     if (!await db.Modules.AnyAsync())
     {
         var now = DateTimeOffset.UtcNow;
