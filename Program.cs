@@ -74,6 +74,9 @@ builder.Services.AddDbContext<SbdDbContext>(options =>
                Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
 builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 
+// Phase B.4: capability grant lookup with Redis cache (cap_v keyed)
+builder.Services.AddScoped<Gateway.Services.ICapabilityService, Gateway.Services.CapabilityService>();
+
 // Add MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
 {

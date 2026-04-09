@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Gateway.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,9 +10,8 @@ namespace Gateway.Controllers;
 
 /// <summary>
 /// Read-only "what am I allowed to do" snapshot for /settings/permissions.
-/// Phase A.2.5 — built from existing UserRole + module assignments + Area
-/// Permission Policies. When AuthorityService ships in Phase B, this DTO
-/// gains a Capabilities[] field populated from CapabilityGrant records.
+/// Phase A.2.5: UserRole + module assignments + Area Permission Policies.
+/// Phase B.4: now includes active CapabilityGrants from the HCD system.
 ///
 /// See docs/architecture/SBD-AUTHORITY-SYSTEM.md
 /// </summary>
@@ -21,11 +21,16 @@ namespace Gateway.Controllers;
 public class MePermissionsController : ControllerBase
 {
     private readonly SbdDbContext _context;
+    private readonly ICapabilityService _capabilities;
     private readonly ILogger<MePermissionsController> _logger;
 
-    public MePermissionsController(SbdDbContext context, ILogger<MePermissionsController> logger)
+    public MePermissionsController(
+        SbdDbContext context,
+        ICapabilityService capabilities,
+        ILogger<MePermissionsController> logger)
     {
         _context = context;
+        _capabilities = capabilities;
         _logger = logger;
     }
 
@@ -45,6 +50,9 @@ public class MePermissionsController : ControllerBase
         var userId = CurrentUserId;
         if (userId == null) return Unauthorized();
 
+        // Read cap_v from JWT — used as Redis cache key for grants (Phase B.3/B.4)
+        var capV = long.TryParse(User.FindFirstValue("cap_v"), out var v) ? v : 0L;
+
         // Load roles + scopes
         var userRoles = await _context.UserRoles
             .AsNoTracking()
@@ -54,12 +62,15 @@ public class MePermissionsController : ControllerBase
 
         if (userRoles.Count == 0)
         {
+            var emptyGrants = await _capabilities.GetActiveGrantsAsync(userId.Value, capV, ct);
             return Ok(new PermissionsMeDto
             {
                 ActiveRole = "Student",
                 Roles = new(),
                 Modules = new(),
                 SelfEditPolicies = new(),
+                Grants = emptyGrants.ToList(),
+                CapVersion = capV,
             });
         }
 
@@ -195,12 +206,16 @@ public class MePermissionsController : ControllerBase
             }
         }
 
+        var grants = await _capabilities.GetActiveGrantsAsync(userId.Value, capV, ct);
+
         return Ok(new PermissionsMeDto
         {
             ActiveRole = activeRole,
             Roles = roleAssignments,
             Modules = modules.OrderBy(m => m.Code).ToList(),
             SelfEditPolicies = policies,
+            Grants = grants.ToList(),
+            CapVersion = capV,
         });
     }
 }
