@@ -599,6 +599,46 @@ using (var scope = app.Services.CreateScope())
 
     // Seed academic calendar structure
     await Gateway.AcademicCalendarSeedData.SeedAsync(db);
+
+    // ── Phase A.2.5 — Seed AreaPermissionPolicy default rows for self-edit ──
+    // For every Area, ensure the 4 self-edit policy codes exist (default = false).
+    // Admins toggle these from /administrator/areas/{id}/policies. The
+    // PersonnelMeController + AreaPersonnelMeController in PersonnelApi /
+    // PersonnelAdminApi consult these flags before allowing field-level edits.
+    var selfEditPolicyCodes = new (string Code, string Description)[]
+    {
+        ("personnel.self_edit_subject",
+         "อนุญาตให้ครูแก้ไขกลุ่มสาระ/วิชาเอกของตนเอง"),
+        ("personnel.self_edit_birthdate",
+         "อนุญาตให้บุคลากรแก้ไขวันเกิดของตนเอง"),
+        ("personnel.self_edit_education",
+         "อนุญาตให้บุคลากรเพิ่ม/แก้ไข/ลบประวัติการศึกษาของตนเอง"),
+    };
+    var areas = await db.Areas.AsNoTracking().Select(a => a.Id).ToListAsync();
+    foreach (var areaId in areas)
+    {
+        foreach (var (code, desc) in selfEditPolicyCodes)
+        {
+            var exists = await db.AreaPermissionPolicies
+                .AnyAsync(p => p.AreaId == areaId && p.PermissionCode == code);
+            if (!exists)
+            {
+                db.AreaPermissionPolicies.Add(new SBD.Domain.Entities.AreaPermissionPolicy
+                {
+                    AreaId = areaId,
+                    PermissionCode = code,
+                    AllowSchoolAdmin = false, // off by default — admin opts in
+                    Description = desc,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                });
+            }
+        }
+    }
+    if (db.ChangeTracker.HasChanges())
+    {
+        await db.SaveChangesAsync();
+        Console.WriteLine("[Seed] AreaPermissionPolicy self-edit rows ensured.");
+    }
 }
 
 // Configure the HTTP request pipeline
