@@ -768,7 +768,7 @@ using (var scope = app.Services.CreateScope())
             ""AcademicYear"" INTEGER NOT NULL,
             ""Semester""     INTEGER NOT NULL,
             ""Gpa""          NUMERIC(4,2),
-            ""SubjectGrades"" JSONB NOT NULL DEFAULT '{}'::jsonb
+            ""SubjectGrades"" JSONB NOT NULL DEFAULT '{{}}'::jsonb
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentAcademics_Profile_Year_Sem""
             ON ""StudentAcademics"" (""StudentProfileId"", ""AcademicYear"", ""Semester"");
