@@ -88,6 +88,83 @@ public class AiProxyController : ControllerBase
             ? Content(responseBody, "application/json")
             : StatusCode((int)response.StatusCode, responseBody);
     }
+
+    /// <summary>
+    /// SSE streaming — proxies text/event-stream from AiService to Angular.
+    /// Angular reads events: thinking → tool_call → tool_result → final
+    /// </summary>
+    [HttpPost("assist/stream")]
+    public async Task AssistStream(
+        [FromBody] AiAssistRequest request,
+        CancellationToken ct)
+    {
+        var aiUrl = _configuration["ServiceUrls:AiService"] ?? "http://svc-sbd-ai";
+
+        var rawJwt = HttpContext.Request.Headers.Authorization
+            .FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase)
+            ?? string.Empty;
+
+        var schoolIdClaim = User.FindFirst("school_id")?.Value;
+        var areaIdClaim = User.FindFirst("area_id")?.Value;
+        var role = User.FindFirst(ClaimTypes.Role)?.Value
+            ?? User.FindFirst("role")?.Value
+            ?? "unknown";
+
+        var enriched = new
+        {
+            request.Intent,
+            request.AdditionalContext,
+            UserJwt = rawJwt,
+            SchoolId = request.SchoolId
+                ?? (int.TryParse(schoolIdClaim, out var sid) ? sid : (int?)null),
+            AreaId = request.AreaId
+                ?? (int.TryParse(areaIdClaim, out var aid) ? aid : (int?)null),
+            Role = role
+        };
+
+        Response.Headers.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        using var httpClient = _factory.CreateClient();
+        httpClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", rawJwt);
+        httpClient.Timeout = TimeSpan.FromMinutes(5);
+
+        var bodyContent = new StringContent(
+            JsonSerializer.Serialize(enriched, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            }),
+            Encoding.UTF8, "application/json");
+
+        try
+        {
+            using var upstreamResponse = await httpClient.PostAsync(
+                $"{aiUrl}/api/ai/assist/stream", bodyContent,
+                HttpCompletionOption.ResponseHeadersRead, ct);
+
+            using var stream = await upstreamResponse.Content.ReadAsStreamAsync(ct);
+            using var reader = new System.IO.StreamReader(stream);
+
+            while (!reader.EndOfStream && !ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct);
+                if (line is null) break;
+                await Response.WriteAsync(line + "\n", ct);
+                if (line.StartsWith("data:"))
+                    await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException) { /* client disconnected */ }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[AiProxy] Stream error");
+            var errJson = JsonSerializer.Serialize(new { type = "error", data = ex.Message });
+            await Response.WriteAsync($"data: {errJson}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+    }
 }
 
 public record AiAssistRequest(
