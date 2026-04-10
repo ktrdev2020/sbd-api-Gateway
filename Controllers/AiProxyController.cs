@@ -140,9 +140,12 @@ public class AiProxyController : ControllerBase
 
         try
         {
-            using var upstreamResponse = await httpClient.PostAsync(
-                $"{aiUrl}/api/ai/assist/stream", bodyContent,
-                HttpCompletionOption.ResponseHeadersRead, ct);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{aiUrl}/api/ai/assist/stream")
+            {
+                Content = bodyContent
+            };
+            using var upstreamResponse = await httpClient.SendAsync(
+                req, HttpCompletionOption.ResponseHeadersRead, ct);
 
             using var stream = await upstreamResponse.Content.ReadAsStreamAsync(ct);
             using var reader = new System.IO.StreamReader(stream);
