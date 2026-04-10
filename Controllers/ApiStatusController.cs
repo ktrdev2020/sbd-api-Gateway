@@ -29,6 +29,7 @@ public class ApiStatusController : ControllerBase
         ["BudgetApi"] = "Budget API",
         ["GeneralAdminApi"] = "General Admin API",
         ["QueueApi"] = "Queue Management API",
+        ["McpService"] = "MCP Context Server (AI tool orchestration)",
     };
 
     public ApiStatusController(
