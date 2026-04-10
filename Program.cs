@@ -880,6 +880,9 @@ using (var scope = app.Services.CreateScope())
     // Seed academic calendar structure
     await Gateway.AcademicCalendarSeedData.SeedAsync(db);
 
+    // Seed demo personnel for school 159 (for AI / QA testing)
+    await Gateway.PersonnelSeedData.SeedAsync(db);
+
     // ── Phase A.2.5 — Seed AreaPermissionPolicy default rows for self-edit ──
     // For every Area, ensure the 4 self-edit policy codes exist (default = false).
     // Admins toggle these from /administrator/areas/{id}/policies. The
