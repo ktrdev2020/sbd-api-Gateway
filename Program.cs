@@ -734,68 +734,69 @@ using (var scope = app.Services.CreateScope())
     // StudentProfile + sub-tables. StudentApi reads these directly via SbdDbContext.
     await db.Database.ExecuteSqlRawAsync(@"
         -- StudentProfile (main record, linked to Personnel + User)
+        -- CREATE TABLE handles fresh installs; ALTER TABLE handles partial/EF-created tables
         CREATE TABLE IF NOT EXISTS ""StudentProfiles"" (
-            ""Id""                   SERIAL PRIMARY KEY,
-            ""PersonnelId""          INTEGER NOT NULL REFERENCES ""Personnel""(""Id"") ON DELETE RESTRICT,
-            ""StudentCode""          VARCHAR(50) NOT NULL,
-            ""Status""               VARCHAR(30) NOT NULL DEFAULT 'active',
-            ""SchoolId""             INTEGER REFERENCES ""Schools""(""Id"") ON DELETE RESTRICT,
-            ""EnrollYear""           INTEGER,
-            ""GraduateYear""         INTEGER,
-            ""GradeLevel""           VARCHAR(20),
-            ""Classroom""            VARCHAR(50),
-            ""AdvisorId""            INTEGER REFERENCES ""Personnel""(""Id"") ON DELETE SET NULL,
-            ""Nationality""          VARCHAR(100),
-            ""Religion""             VARCHAR(100),
-            ""DisabilityType""       VARCHAR(100),
-            ""IsDisadvantaged""      BOOLEAN NOT NULL DEFAULT FALSE,
-            ""DistanceToSchoolKm""   NUMERIC(6,1),
-            ""ParentName""           VARCHAR(200),
-            ""ParentPhone""          VARCHAR(50),
-            ""ParentRelation""       VARCHAR(100),
-            ""CreatedAt""            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            ""UpdatedAt""            TIMESTAMPTZ
+            ""Id"" SERIAL PRIMARY KEY
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_StudentCode"" ON ""StudentProfiles"" (""StudentCode"");
-        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_PersonnelId"" ON ""StudentProfiles"" (""PersonnelId"");
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""PersonnelId""        INTEGER REFERENCES ""Personnel""(""Id"") ON DELETE RESTRICT;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""StudentCode""         VARCHAR(50);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""Status""              VARCHAR(30) NOT NULL DEFAULT 'active';
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""SchoolId""            INTEGER REFERENCES ""Schools""(""Id"") ON DELETE RESTRICT;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""EnrollYear""          INTEGER;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""GraduateYear""        INTEGER;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""GradeLevel""          VARCHAR(20);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""Classroom""           VARCHAR(50);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""AdvisorId""           INTEGER REFERENCES ""Personnel""(""Id"") ON DELETE SET NULL;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""Nationality""         VARCHAR(100);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""Religion""            VARCHAR(100);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""DisabilityType""      VARCHAR(100);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""IsDisadvantaged""     BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""DistanceToSchoolKm""  NUMERIC(6,1);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""ParentName""          VARCHAR(200);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""ParentPhone""         VARCHAR(50);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""ParentRelation""      VARCHAR(100);
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""CreatedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""UpdatedAt""           TIMESTAMPTZ;
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_StudentCode"" ON ""StudentProfiles"" (""StudentCode"") WHERE ""StudentCode"" IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_PersonnelId"" ON ""StudentProfiles"" (""PersonnelId"") WHERE ""PersonnelId"" IS NOT NULL;
         CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_SchoolId"" ON ""StudentProfiles"" (""SchoolId"");
         CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_Status"" ON ""StudentProfiles"" (""Status"");
 
         -- StudentAcademics (academic records per year+semester)
         CREATE TABLE IF NOT EXISTS ""StudentAcademics"" (
-            ""Id""           SERIAL PRIMARY KEY,
-            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
-            ""AcademicYear"" INTEGER NOT NULL,
-            ""Semester""     INTEGER NOT NULL,
-            ""Gpa""          NUMERIC(4,2),
-            ""SubjectGrades"" JSONB NOT NULL DEFAULT '{{}}'::jsonb
+            ""Id"" SERIAL PRIMARY KEY
         );
+        ALTER TABLE ""StudentAcademics"" ADD COLUMN IF NOT EXISTS ""StudentProfileId"" INTEGER REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE;
+        ALTER TABLE ""StudentAcademics"" ADD COLUMN IF NOT EXISTS ""AcademicYear""  INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ""StudentAcademics"" ADD COLUMN IF NOT EXISTS ""Semester""      INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ""StudentAcademics"" ADD COLUMN IF NOT EXISTS ""Gpa""           NUMERIC(4,2);
+        ALTER TABLE ""StudentAcademics"" ADD COLUMN IF NOT EXISTS ""SubjectGrades"" JSONB NOT NULL DEFAULT '{{}}'::jsonb;
         CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentAcademics_Profile_Year_Sem""
-            ON ""StudentAcademics"" (""StudentProfileId"", ""AcademicYear"", ""Semester"");
+            ON ""StudentAcademics"" (""StudentProfileId"", ""AcademicYear"", ""Semester"") WHERE ""StudentProfileId"" IS NOT NULL;
 
         -- StudentActivities (extra-curricular / honors)
         CREATE TABLE IF NOT EXISTS ""StudentActivities"" (
-            ""Id""               SERIAL PRIMARY KEY,
-            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
-            ""Type""             VARCHAR(50) NOT NULL,
-            ""Title""            VARCHAR(500) NOT NULL,
-            ""ActivityDate""     DATE NOT NULL,
-            ""AttachmentPath""   VARCHAR(1000)
+            ""Id"" SERIAL PRIMARY KEY
         );
+        ALTER TABLE ""StudentActivities"" ADD COLUMN IF NOT EXISTS ""StudentProfileId"" INTEGER REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE;
+        ALTER TABLE ""StudentActivities"" ADD COLUMN IF NOT EXISTS ""Type""           VARCHAR(50) NOT NULL DEFAULT '';
+        ALTER TABLE ""StudentActivities"" ADD COLUMN IF NOT EXISTS ""Title""          VARCHAR(500) NOT NULL DEFAULT '';
+        ALTER TABLE ""StudentActivities"" ADD COLUMN IF NOT EXISTS ""ActivityDate""   DATE;
+        ALTER TABLE ""StudentActivities"" ADD COLUMN IF NOT EXISTS ""AttachmentPath"" VARCHAR(1000);
         CREATE INDEX IF NOT EXISTS ""IX_StudentActivities_ProfileId"" ON ""StudentActivities"" (""StudentProfileId"");
 
         -- StudentHealthRecords (physical health per term)
         CREATE TABLE IF NOT EXISTS ""StudentHealthRecords"" (
-            ""Id""               SERIAL PRIMARY KEY,
-            ""StudentProfileId"" INTEGER NOT NULL REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE,
-            ""AcademicYear""     INTEGER NOT NULL,
-            ""Term""             INTEGER NOT NULL,
-            ""RecordDate""       DATE NOT NULL,
-            ""WeightKg""         NUMERIC(5,1),
-            ""HeightCm""         NUMERIC(5,1),
-            ""Bmi""              NUMERIC(4,1),
-            ""HealthStatus""     VARCHAR(100)
+            ""Id"" SERIAL PRIMARY KEY
         );
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""StudentProfileId"" INTEGER REFERENCES ""StudentProfiles""(""Id"") ON DELETE CASCADE;
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""AcademicYear""   INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""Term""           INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""RecordDate""     DATE;
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""WeightKg""       NUMERIC(5,1);
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""HeightCm""       NUMERIC(5,1);
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""Bmi""            NUMERIC(4,1);
+        ALTER TABLE ""StudentHealthRecords"" ADD COLUMN IF NOT EXISTS ""HealthStatus""   VARCHAR(100);
         CREATE INDEX IF NOT EXISTS ""IX_StudentHealthRecords_ProfileId"" ON ""StudentHealthRecords"" (""StudentProfileId"");
     ");
     Console.WriteLine("[Migration] Phase D.1 StudentProfile tables ensured.");
