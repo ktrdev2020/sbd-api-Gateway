@@ -76,6 +76,23 @@ public class McpProxyController : ControllerBase
             : StatusCode((int)response.StatusCode, body);
     }
 
+    // ── Analytics ─────────────────────────────────────────────────────────────
+
+    [HttpGet("analytics")]
+    public Task<ActionResult> GetAnalytics(CancellationToken ct) =>
+        ProxyGet("/analytics", ct);
+
+    [HttpDelete("analytics")]
+    public async Task<ActionResult> ResetAnalytics(CancellationToken ct)
+    {
+        var client = _factory.CreateClient();
+        var response = await client.DeleteAsync($"{McpUrl}/analytics", ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return response.IsSuccessStatusCode
+            ? Content(body, "application/json")
+            : StatusCode((int)response.StatusCode, body);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<ActionResult> ProxyGet(string path, CancellationToken ct)
