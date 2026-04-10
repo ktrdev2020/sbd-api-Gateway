@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text;
 
 namespace Gateway.Controllers;
 
 /// <summary>
-/// Proxies McpService inspection endpoints for the SuperAdmin MCP Console.
-/// Angular → GET /api/v1/mcp/tools → McpService /tools
+/// Proxies McpService inspection + template management endpoints for the SuperAdmin MCP Console.
+/// Angular → /api/v1/mcp/* → McpService /*
 /// </summary>
 [ApiController]
 [Route("api/v1/mcp")]
@@ -21,34 +22,69 @@ public class McpProxyController : ControllerBase
         _configuration = configuration;
     }
 
+    private string McpUrl => _configuration["ServiceUrls:McpService"] ?? "http://svc-sbd-mcp";
+
+    // ── Inspection ────────────────────────────────────────────────────────────
+
     [HttpGet("tools")]
-    public async Task<ActionResult> GetTools(CancellationToken ct)
+    public Task<ActionResult> GetTools(CancellationToken ct) =>
+        ProxyGet("/tools", ct);
+
+    [HttpGet("health")]
+    public async Task<ActionResult> GetHealth(CancellationToken ct)
     {
-        var mcpUrl = _configuration["ServiceUrls:McpService"] ?? "http://svc-sbd-mcp";
+        try { return await ProxyGet("/health", ct); }
+        catch { return StatusCode(503, new { status = "Unreachable" }); }
+    }
+
+    // ── Prompt Templates ──────────────────────────────────────────────────────
+
+    [HttpGet("templates")]
+    public Task<ActionResult> GetTemplates(CancellationToken ct) =>
+        ProxyGet("/templates", ct);
+
+    [HttpGet("templates/{name}")]
+    public Task<ActionResult> GetTemplate(string name, CancellationToken ct) =>
+        ProxyGet($"/templates/{name}", ct);
+
+    [HttpPut("templates/{name}")]
+    public async Task<ActionResult> UpsertTemplate(string name, CancellationToken ct)
+    {
+        var body = await new StreamReader(Request.Body).ReadToEndAsync(ct);
         var client = _factory.CreateClient();
-        var response = await client.GetAsync($"{mcpUrl}/tools", ct);
+        // Forward the Gateway-validated JWT so McpService knows who updated the template
+        var jwt = Request.Headers.Authorization.FirstOrDefault() ?? "";
+        if (!string.IsNullOrEmpty(jwt))
+            client.DefaultRequestHeaders.Add("Authorization", jwt);
+
+        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        var response = await client.PutAsync($"{McpUrl}/templates/{name}", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return response.IsSuccessStatusCode
+            ? Content(responseBody, "application/json")
+            : StatusCode((int)response.StatusCode, responseBody);
+    }
+
+    [HttpDelete("templates/{name}")]
+    public async Task<ActionResult> DeleteTemplate(string name, CancellationToken ct)
+    {
+        var client = _factory.CreateClient();
+        var response = await client.DeleteAsync($"{McpUrl}/templates/{name}", ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         return response.IsSuccessStatusCode
             ? Content(body, "application/json")
             : StatusCode((int)response.StatusCode, body);
     }
 
-    [HttpGet("health")]
-    public async Task<ActionResult> GetHealth(CancellationToken ct)
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private async Task<ActionResult> ProxyGet(string path, CancellationToken ct)
     {
-        var mcpUrl = _configuration["ServiceUrls:McpService"] ?? "http://svc-sbd-mcp";
         var client = _factory.CreateClient();
-        try
-        {
-            var response = await client.GetAsync($"{mcpUrl}/health", ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
-            return response.IsSuccessStatusCode
-                ? Content(body, "application/json")
-                : StatusCode((int)response.StatusCode, body);
-        }
-        catch
-        {
-            return StatusCode(503, new { status = "Unreachable" });
-        }
+        var response = await client.GetAsync($"{McpUrl}{path}", ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return response.IsSuccessStatusCode
+            ? Content(body, "application/json")
+            : StatusCode((int)response.StatusCode, body);
     }
 }
