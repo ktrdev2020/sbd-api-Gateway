@@ -86,7 +86,8 @@ public class AreaModuleController : ControllerBase
                 assignment.Id, areaId, moduleId, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
                 assignment.IsEnabled, assignment.AllowSchoolSelfEnable,
-                assignment.AssignedAt, assignment.AssignedBy, assignment.Notes
+                assignment.AssignedAt, assignment.AssignedBy, assignment.Notes,
+                SchoolCount: 0
             ));
     }
 
