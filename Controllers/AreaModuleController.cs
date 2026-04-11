@@ -182,6 +182,26 @@ public class AreaModuleController : ControllerBase
     }
 
     /// <summary>
+    /// Toggle enable/disable a module for a specific school within an area (data is preserved).
+    /// </summary>
+    [HttpPut("{moduleId:int}/schools/{schoolModuleId:int}/toggle")]
+    public async Task<ActionResult> ToggleSchoolModuleByArea(int areaId, int moduleId, int schoolModuleId)
+    {
+        var sm = await _context.SchoolModules
+            .AsTracking()
+            .Include(s => s.School)
+            .FirstOrDefaultAsync(s => s.Id == schoolModuleId && s.ModuleId == moduleId && s.School.AreaId == areaId);
+
+        if (sm == null)
+            return NotFound(new { message = "School module not found in this area" });
+
+        sm.IsEnabled = !sm.IsEnabled;
+        await _context.SaveChangesAsync();
+
+        return Ok(new { sm.Id, sm.IsEnabled });
+    }
+
+    /// <summary>
     /// Assign a module to specific schools within an area (e.g. for pilot programs).
     /// </summary>
     [HttpPost("{moduleId:int}/schools")]
