@@ -152,7 +152,7 @@ using (var scope = app.Services.CreateScope())
             Console.WriteLine("[Migration] Database schema is up to date.");
             break;
         }
-        catch (PostgresException ex) when (ex.SqlState == "42P07")
+        catch (PostgresException ex) when (ex.SqlState is "42P07" or "42701")
         {
             attempt++;
             if (attempt > maxBaselineAttempts)
