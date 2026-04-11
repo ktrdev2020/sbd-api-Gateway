@@ -11,10 +11,9 @@ namespace Gateway.Data;
 /// Strategy:
 /// - Module shadow properties: VisibilityLevels, RegistrationType, EntryUrl, BundlePath,
 ///   ConfigJson, Author, License, CreatedAt, UpdatedAt
-/// - SchoolModule shadow properties: Notes, IsPilot
 ///
-/// When SBD.Domain NuGet is updated with these fields, remove shadow property
-/// definitions here — EF Core will use the entity properties directly.
+/// SchoolModule.IsPilot and SchoolModule.Notes are now real entity properties in SBD.Domain.
+/// Their shadow property definitions have been removed.
 /// </summary>
 public class GatewayDbContext : SbdDbContext
 {
@@ -48,13 +47,7 @@ public class GatewayDbContext : SbdDbContext
                 .HasDefaultValueSql("NOW()").HasColumnName("UpdatedAt");
         });
 
-        // ── SchoolModule: shadow properties for new fields not yet in NuGet ──
-        modelBuilder.Entity<SchoolModule>(entity =>
-        {
-            entity.Property<string?>("Notes")
-                .HasColumnName("Notes");
-            entity.Property<bool>("IsPilot")
-                .HasDefaultValue(false).HasColumnName("IsPilot");
-        });
+        // SchoolModule: IsPilot + Notes are now real entity properties in SBD.Domain.
+        // Shadow property definitions removed — EF Core uses the entity CLR properties directly.
     }
 }

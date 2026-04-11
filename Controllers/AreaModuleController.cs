@@ -172,9 +172,9 @@ public class AreaModuleController : ControllerBase
                 SchoolName = sm.School.NameTh,
                 SchoolCode = sm.School.SchoolCode,
                 sm.IsEnabled,
-                IsPilot = EF.Property<bool>(sm, "IsPilot"),
+                sm.IsPilot,
                 sm.InstalledAt,
-                Notes = EF.Property<string?>(sm, "Notes")
+                sm.Notes,
             })
             .ToListAsync();
 
@@ -241,10 +241,9 @@ public class AreaModuleController : ControllerBase
                 IsEnabled = true,
                 InstalledAt = DateTimeOffset.UtcNow
             };
+            sm.IsPilot = request.IsPilot;
+            sm.Notes = request.Notes;
             _context.SchoolModules.Add(sm);
-            var smEntry = _context.Entry(sm);
-            smEntry.Property("IsPilot").CurrentValue = request.IsPilot;
-            smEntry.Property("Notes").CurrentValue = request.Notes;
         }
 
         await _context.SaveChangesAsync();
