@@ -39,7 +39,8 @@ public class AreaModuleController : ControllerBase
                 ama.Module.Code, ama.Module.Name, ama.Module.Description,
                 ama.Module.Icon, ama.Module.Category, ama.Module.Version,
                 ama.IsEnabled, ama.AllowSchoolSelfEnable,
-                ama.AssignedAt, ama.AssignedBy, ama.Notes
+                ama.AssignedAt, ama.AssignedBy, ama.Notes,
+                _context.SchoolModules.Count(sm => sm.ModuleId == ama.ModuleId && sm.School.AreaId == areaId)
             ))
             .ToListAsync();
 
@@ -264,7 +265,8 @@ public record AreaModuleDto(
     string ModuleCode, string ModuleName, string? ModuleDescription,
     string? ModuleIcon, string ModuleCategory, string? ModuleVersion,
     bool IsEnabled, bool AllowSchoolSelfEnable,
-    DateTimeOffset AssignedAt, int? AssignedBy, string? Notes
+    DateTimeOffset AssignedAt, int? AssignedBy, string? Notes,
+    int SchoolCount
 );
 
 public record AssignAreaModuleRequest(
