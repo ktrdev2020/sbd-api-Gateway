@@ -163,10 +163,15 @@ public class SchoolModuleController : ControllerBase
     {
         var schoolModule = await _context.SchoolModules
             .AsTracking()
+            .Include(sm => sm.Module)
             .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
 
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
+
+        // Core modules are system-mandatory — cannot be uninstalled by school admin
+        if (schoolModule.Module.Category == "Core")
+            return StatusCode(403, new { message = "ไม่สามารถถอนการติดตั้ง Core Module ได้ โมดูลนี้เป็นระบบบังคับ" });
 
         var assignments = await _context.Set<TeacherModuleAssignment>()
             .Where(ta => ta.SchoolModuleId == schoolModuleId)

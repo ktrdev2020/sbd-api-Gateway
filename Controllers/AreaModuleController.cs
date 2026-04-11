@@ -120,15 +120,35 @@ public class AreaModuleController : ControllerBase
     {
         var assignment = await _context.Set<AreaModuleAssignment>()
             .AsTracking()
+            .Include(ama => ama.Module)
             .FirstOrDefaultAsync(ama => ama.AreaId == areaId && ama.ModuleId == moduleId);
 
         if (assignment == null)
             return NotFound(new { message = "Module is not assigned to this area" });
 
+        // Core modules are system-mandatory — cannot be removed by area admin
+        if (assignment.Module.Category == "Core")
+            return StatusCode(403, new { message = "ไม่สามารถลบ Core Module ได้ โมดูลนี้เป็นระบบบังคับ" });
+
         _context.Set<AreaModuleAssignment>().Remove(assignment);
         await _context.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Get all schools in an area (for the school picker when assigning modules).
+    /// </summary>
+    [HttpGet("/api/v1/area/{areaId:int}/schools/list")]
+    public async Task<ActionResult> GetAreaSchoolsList(int areaId)
+    {
+        var schools = await _context.Schools
+            .AsNoTracking()
+            .Where(s => s.AreaId == areaId)
+            .OrderBy(s => s.NameTh)
+            .Select(s => new { s.Id, NameTh = s.NameTh, s.SchoolCode })
+            .ToListAsync();
+        return Ok(schools);
     }
 
     /// <summary>
