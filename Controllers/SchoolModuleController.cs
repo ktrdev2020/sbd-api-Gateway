@@ -74,9 +74,19 @@ public class SchoolModuleController : ControllerBase
         if (school.AreaId == null)
             return Ok(new List<object>());
 
+        // Installed module IDs for this school — used to exclude from the available list
+        var installedModuleIds = await _context.SchoolModules
+            .AsNoTracking()
+            .Where(sm => sm.SchoolId == schoolId)
+            .Select(sm => sm.ModuleId)
+            .ToListAsync();
+
+        var installedSet = new HashSet<int>(installedModuleIds);
+
         var areaModules = await _context.Set<SBD.Domain.Entities.AreaModuleAssignment>()
             .AsNoTracking()
-            .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled)
+            // Only return modules the area has enabled AND school is allowed to self-install
+            .Where(ama => ama.AreaId == school.AreaId && ama.IsEnabled && ama.AllowSchoolSelfEnable)
             .Include(ama => ama.Module)
             .Select(ama => new
             {
@@ -87,13 +97,15 @@ public class SchoolModuleController : ControllerBase
                 ama.Module.Icon,
                 ama.Module.Category,
                 ama.Module.Version,
-                ama.AllowSchoolSelfEnable,
-                IsInstalled = _context.SchoolModules
-                    .Any(sm => sm.SchoolId == schoolId && sm.ModuleId == ama.ModuleId)
+                ama.Module.AssignableToTeacher,
+                ama.Module.AssignableToStudent,
             })
             .ToListAsync();
 
-        return Ok(areaModules);
+        // Exclude modules already installed at DB level (double-safety)
+        var result = areaModules.Where(m => !installedSet.Contains(m.ModuleId)).ToList();
+
+        return Ok(result);
     }
 
     /// <summary>
