@@ -1,84 +1,130 @@
 using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SBD.Infrastructure.Data;
 using SBD.Messaging.Events;
 
 namespace Gateway.Controllers;
 
 /// <summary>
 /// Admin notification management — compose and broadcast notifications.
-/// Angular calls these endpoints; Gateway publishes PushNotificationEvent to MassTransit.
-/// RealtimeService.PushNotificationConsumer handles delivery via SignalR + WebPush + FCM.
+///
+/// Behavior:
+///  - Target "user":   one per-user event → reaches SignalR + WebPush + FCM
+///  - Target "role/school/area/all": fans out to per-user events for every member
+///    of the group (so WebPush + FCM can reach offline users). SignalR still
+///    delivers in real time because each user is in their personal `user:{id}` group.
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/notifications")]
 [Authorize(Roles = "super_admin,SuperAdmin")]
-public class AdminNotificationController(IPublishEndpoint publish) : ControllerBase
+public class AdminNotificationController(SbdDbContext db, IPublishEndpoint publish) : ControllerBase
 {
-    /// <summary>
-    /// POST /api/v1/admin/notifications/send
-    /// Compose and send a notification to a specific target.
-    /// </summary>
     [HttpPost("send")]
-    public async Task<IActionResult> Send([FromBody] AdminSendRequest req)
+    public async Task<IActionResult> Send([FromBody] AdminSendRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Title) || string.IsNullOrWhiteSpace(req.Message))
             return BadRequest(new { message = "title และ message ต้องไม่ว่าง" });
 
-        var (userId, groupName) = ResolveTarget(req);
+        var userIds = await ResolveUserIdsAsync(req, ct);
 
-        if (userId == null && groupName == null)
-            return BadRequest(new { message = "ระบุ targetType ไม่ถูกต้อง" });
+        if (userIds.Count == 0)
+            return BadRequest(new { message = "ไม่พบผู้รับที่ตรงกับเงื่อนไข" });
 
         var correlationId = Guid.NewGuid().ToString("N")[..12];
 
-        await publish.Publish(new PushNotificationEvent(
-            UserId:    userId,
-            GroupName: groupName,
-            Title:     req.Title,
-            Message:   req.Message,
-            Type:      req.Type ?? "info",
-            ActionUrl: req.ActionUrl
-        ));
+        // Fan-out: one event per user — consumer sends via SignalR user:{id} group
+        // + WebPush + FCM for offline users.
+        foreach (var uid in userIds)
+        {
+            await publish.Publish(new PushNotificationEvent(
+                UserId:    uid,
+                GroupName: null,
+                Title:     req.Title,
+                Message:   req.Message,
+                Type:      req.Type ?? "info",
+                ActionUrl: req.ActionUrl
+            ), ct);
+        }
 
-        return Ok(new { message = "ส่งการแจ้งเตือนสำเร็จ", correlationId });
+        return Ok(new { message = "ส่งการแจ้งเตือนสำเร็จ", recipients = userIds.Count, correlationId });
     }
 
-    /// <summary>
-    /// POST /api/v1/admin/notifications/test-send
-    /// Send a test notification to a specific role group for verification.
-    /// </summary>
     [HttpPost("test-send")]
-    public async Task<IActionResult> TestSend([FromBody] AdminTestSendRequest req)
+    public async Task<IActionResult> TestSend([FromBody] AdminTestSendRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Role))
             return BadRequest(new { message = "ระบุ role ไม่ถูกต้อง" });
 
-        await publish.Publish(new PushNotificationEvent(
-            UserId:    null,
-            GroupName: $"role:{req.Role}",
-            Title:     req.Title ?? "🔔 ทดสอบระบบแจ้งเตือน",
-            Message:   req.Message ?? $"นี่คือข้อความทดสอบสำหรับกลุ่ม {req.Role}",
-            Type:      "info",
-            ActionUrl: null
-        ));
+        var userIds = await GetUsersByRoleAsync(req.Role, ct);
 
-        return Ok(new { message = $"ส่งการทดสอบไปยัง role:{req.Role} สำเร็จ" });
+        if (userIds.Count == 0)
+            return BadRequest(new { message = $"ไม่พบผู้ใช้ในบทบาท {req.Role}" });
+
+        var title = req.Title ?? "🔔 ทดสอบระบบแจ้งเตือน";
+        var msg   = req.Message ?? $"ข้อความทดสอบสำหรับกลุ่ม {req.Role}";
+
+        foreach (var uid in userIds)
+        {
+            await publish.Publish(new PushNotificationEvent(
+                UserId:    uid,
+                GroupName: null,
+                Title:     title,
+                Message:   msg,
+                Type:      "info",
+                ActionUrl: null
+            ), ct);
+        }
+
+        return Ok(new { message = $"ส่งทดสอบไปยัง {userIds.Count} คนในบทบาท {req.Role} สำเร็จ" });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static (int? userId, string? groupName) ResolveTarget(AdminSendRequest req)
+    private async Task<List<int>> ResolveUserIdsAsync(AdminSendRequest req, CancellationToken ct)
     {
         return req.TargetType switch
         {
-            "all"    => (null, "all"),
-            "user"   => (req.TargetId, null),
-            "role"   => (null, !string.IsNullOrEmpty(req.TargetValue) ? $"role:{req.TargetValue}" : null),
-            "school" => (null, req.TargetId.HasValue ? $"school:{req.TargetId}" : null),
-            "area"   => (null, req.TargetId.HasValue ? $"area:{req.TargetId}" : null),
-            _        => (null, null)
+            "user"   => req.TargetId is int uid
+                        ? new List<int> { uid }
+                        : new List<int>(),
+
+            "all"    => await db.Users
+                            .Where(u => u.IsActive)
+                            .Select(u => u.Id)
+                            .ToListAsync(ct),
+
+            "role"   => !string.IsNullOrEmpty(req.TargetValue)
+                        ? await GetUsersByRoleAsync(req.TargetValue, ct)
+                        : new List<int>(),
+
+            "school" => req.TargetId is int sid
+                        ? await db.UserRoles
+                            .Where(ur => ur.ScopeType == "school" && ur.ScopeId == sid)
+                            .Select(ur => ur.UserId)
+                            .Distinct()
+                            .ToListAsync(ct)
+                        : new List<int>(),
+
+            "area"   => req.TargetId is int aid
+                        ? await db.UserRoles
+                            .Where(ur => ur.ScopeType == "area" && ur.ScopeId == aid)
+                            .Select(ur => ur.UserId)
+                            .Distinct()
+                            .ToListAsync(ct)
+                        : new List<int>(),
+
+            _ => new List<int>()
         };
+    }
+
+    private Task<List<int>> GetUsersByRoleAsync(string roleCode, CancellationToken ct)
+    {
+        return db.Users
+            .Where(u => u.IsActive && u.UserRoles.Any(ur => ur.Role.Code == roleCode))
+            .Select(u => u.Id)
+            .ToListAsync(ct);
     }
 }
 
@@ -86,11 +132,11 @@ public class AdminSendRequest
 {
     public required string Title       { get; set; }
     public required string Message     { get; set; }
-    public string?         Type        { get; set; }  // info|success|warning|error
+    public string?         Type        { get; set; }
     public string?         ActionUrl   { get; set; }
-    public required string TargetType  { get; set; }  // all|user|role|school|area
-    public int?            TargetId    { get; set; }  // userId / schoolId / areaId
-    public string?         TargetValue { get; set; }  // role name (e.g. "Teacher")
+    public required string TargetType  { get; set; }
+    public int?            TargetId    { get; set; }
+    public string?         TargetValue { get; set; }
 }
 
 public class AdminTestSendRequest
