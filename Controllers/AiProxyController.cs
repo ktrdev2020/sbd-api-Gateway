@@ -62,7 +62,11 @@ public class AiProxyController : ControllerBase
                 ?? (int.TryParse(schoolIdClaim, out var sid) ? sid : (int?)null),
             AreaId = request.AreaId
                 ?? (int.TryParse(areaIdClaim, out var aid) ? aid : (int?)null),
-            Role = role
+            Role = role,
+            request.TeacherId,
+            request.StudentId,
+            request.History,
+            request.NavItems
         };
 
         _logger.LogInformation(
@@ -119,7 +123,11 @@ public class AiProxyController : ControllerBase
                 ?? (int.TryParse(schoolIdClaim, out var sid) ? sid : (int?)null),
             AreaId = request.AreaId
                 ?? (int.TryParse(areaIdClaim, out var aid) ? aid : (int?)null),
-            Role = role
+            Role = role,
+            request.TeacherId,
+            request.StudentId,
+            request.History,
+            request.NavItems
         };
 
         Response.Headers.ContentType = "text/event-stream";
@@ -168,11 +176,91 @@ public class AiProxyController : ControllerBase
             await Response.Body.FlushAsync(ct);
         }
     }
+
+    /// <summary>
+    /// Public SSE streaming — unauthenticated, restricted to public data only.
+    /// Used by the Public role chatbot (e.g. school directory page with no login).
+    /// AiService will filter tools via ToolFilterService with role = "Public".
+    /// </summary>
+    [HttpPost("assist/public/stream")]
+    [AllowAnonymous]
+    public async Task AssistPublicStream(
+        [FromBody] AiPublicAssistRequest request,
+        CancellationToken ct)
+    {
+        var aiUrl = _configuration["ServiceUrls:AiService"] ?? "http://svc-sbd-ai";
+
+        var enriched = new
+        {
+            request.Intent,
+            request.AreaId,
+            Role = "Public",
+            request.History
+        };
+
+        Response.Headers.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        using var httpClient = _factory.CreateClient();
+        httpClient.Timeout = TimeSpan.FromMinutes(5);
+
+        var bodyContent = new StringContent(
+            JsonSerializer.Serialize(enriched, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            }),
+            Encoding.UTF8, "application/json");
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{aiUrl}/api/ai/assist/stream")
+            {
+                Content = bodyContent
+            };
+            using var upstreamResponse = await httpClient.SendAsync(
+                req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            using var stream = await upstreamResponse.Content.ReadAsStreamAsync(ct);
+            using var reader = new System.IO.StreamReader(stream);
+
+            while (!reader.EndOfStream && !ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct);
+                if (line is null) break;
+                await Response.WriteAsync(line + "\n", ct);
+                if (line.StartsWith("data:"))
+                    await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException) { /* client disconnected */ }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[AiProxy] Public stream error");
+            var errJson = JsonSerializer.Serialize(new { type = "error", data = ex.Message });
+            await Response.WriteAsync($"data: {errJson}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+    }
 }
 
 public record AiAssistRequest(
     string Intent,
     string? AdditionalContext = null,
     int? SchoolId = null,
-    int? AreaId = null
+    int? AreaId = null,
+    int? TeacherId = null,
+    int? StudentId = null,
+    IReadOnlyList<ConversationTurn>? History = null,
+    IReadOnlyList<NavItem>? NavItems = null
+);
+
+public record NavItem(string Label, string Path);
+
+public record ConversationTurn(string Role, string Content);
+
+public record AiPublicAssistRequest(
+    string Intent,
+    int? AreaId = null,
+    IReadOnlyList<ConversationTurn>? History = null
 );
