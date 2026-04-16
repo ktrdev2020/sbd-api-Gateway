@@ -104,7 +104,10 @@ public class SchoolController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
-        return Ok(MapToDto(school));
+        var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
+            .CountAsync(psa => psa.SchoolId == id);
+
+        return Ok(MapToDto(school, teacherCount));
     }
 
     [HttpPost]
@@ -421,7 +424,10 @@ public class SchoolController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
-        return Ok(MapToDto(school));
+        var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
+            .CountAsync(psa => psa.SchoolId == id);
+
+        return Ok(MapToDto(school, teacherCount));
     }
 
     [HttpGet("public/summary")]
@@ -448,7 +454,7 @@ public class SchoolController : ControllerBase
 
     // ─── Helpers ──────────────────────────────────────────────
 
-    private static SchoolDto MapToDto(School s)
+    private static SchoolDto MapToDto(School s, int? teacherCount = null)
     {
         return new SchoolDto
         {
@@ -479,7 +485,7 @@ public class SchoolController : ControllerBase
             EstablishedDate = s.EstablishedDate,
             IsActive = s.IsActive,
             StudentCount = s.StudentCount,
-            TeacherCount = s.TeacherCount,
+            TeacherCount = teacherCount ?? s.TeacherCount,
             LogoUrl = s.LogoUrl,
             LogoThumbnailUrl = s.LogoThumbnailUrl,
             LogoVersion = s.LogoVersion,

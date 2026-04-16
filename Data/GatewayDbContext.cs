@@ -1,3 +1,4 @@
+using Gateway.Models;
 using Microsoft.EntityFrameworkCore;
 using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
@@ -18,6 +19,8 @@ namespace Gateway.Data;
 public class GatewayDbContext : SbdDbContext
 {
     public GatewayDbContext(DbContextOptions<SbdDbContext> options) : base(options) { }
+
+    public DbSet<CacheDefinition> CacheDefinitions => Set<CacheDefinition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

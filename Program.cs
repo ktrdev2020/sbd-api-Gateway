@@ -68,7 +68,8 @@ builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 // then override SbdDbContext resolution to use GatewayDbContext.
 var connectionString = builder.Configuration.GetConnectionString("PostgreSQL") ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
 builder.Services.AddDbContext<SbdDbContext>(options =>
-    options.UseNpgsql(connectionString)
+    options.UseNpgsql(connectionString, npgsql =>
+               npgsql.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null))
            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
            .ConfigureWarnings(w => w.Ignore(
                Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
@@ -103,8 +104,13 @@ builder.Services.AddServiceRegistration("Gateway", opts =>
     opts.HealthUrl = "http://localhost:5000/health";
 });
 
-// Add Controllers
-builder.Services.AddControllers();
+// Add Controllers — camelCase JSON so all API responses match Angular expectations
+builder.Services.AddControllers()
+    .AddJsonOptions(opt =>
+    {
+        opt.JsonSerializerOptions.PropertyNamingPolicy        = System.Text.Json.JsonNamingPolicy.CamelCase;
+        opt.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 
 // Add Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -800,6 +806,118 @@ using (var scope = app.Services.CreateScope())
         CREATE INDEX IF NOT EXISTS ""IX_StudentHealthRecords_ProfileId"" ON ""StudentHealthRecords"" (""StudentProfileId"");
     ");
     Console.WriteLine("[Migration] Phase D.1 StudentProfile tables ensured.");
+
+    // ── CacheDefinitions — Redis key registry (managed by SuperAdmin) ─────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""CacheDefinitions"" (
+            ""Id""                  SERIAL PRIMARY KEY,
+            ""CacheKeyPattern""     VARCHAR(200) NOT NULL,
+            ""Name""                VARCHAR(100) NOT NULL,
+            ""Description""         TEXT,
+            ""GroupPrefix""         VARCHAR(100) NOT NULL,
+            ""DbIndex""             INTEGER NOT NULL DEFAULT 0,
+            ""SuggestedTtlMinutes"" INTEGER,
+            ""IsActive""            BOOLEAN NOT NULL DEFAULT TRUE,
+            ""CreatedAt""           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""UpdatedAt""           TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_CacheDefinitions_Pattern_Db""
+            ON ""CacheDefinitions"" (""CacheKeyPattern"", ""DbIndex"");
+    ");
+
+    // Seed default key definitions (idempotent — skip if any exist)
+    var hasDefs = await db.Database.ExecuteSqlRawAsync(
+        @"INSERT INTO ""CacheDefinitions"" (""CacheKeyPattern"",""Name"",""Description"",""GroupPrefix"",""DbIndex"",""SuggestedTtlMinutes"",""IsActive"",""CreatedAt"")
+          SELECT p,n,d,g,db,ttl,true,NOW() FROM (VALUES
+            ('refdata:',           'Reference Data',          'ข้อมูลอ้างอิง (จังหวัด อำเภอ บทบาท โมดูล)',            'refdata:', 0, 1440),
+            ('svc:',               'Service Registry',        'รายการ microservice ที่ลงทะเบียนใน Redis',              'svc:', 0, NULL),
+            ('rate:',              'Rate Limiting',           'การจำกัด API call ต่อ IP/user',                         'rate:', 0, 1),
+            ('cache:',             'General API Cache',       'Response cache อื่นๆ จาก ICacheService',                'cache:', 0, 60),
+            ('refresh_token:',     'Refresh Token Hash',      'SHA-256 hash ของ refresh token แต่ละ session (90 วัน)', 'refresh_token:', 1, 129600),
+            ('user_sessions:',     'User Sessions Set',       'SET ของ sessionId ทั้งหมดของแต่ละ user',               'user_sessions:', 1, 129600),
+            ('session_meta:',      'Session Metadata',        'ข้อมูล device, IP, User-Agent, LastSeenAt ของ session', 'session_meta:', 1, 129600),
+            ('session_token:',     'Session Token Reference', 'อ้างอิง token hash ปัจจุบันของ session (ใช้ rotate)',   'session_token:', 1, 129600)
+          ) AS t(p,n,d,g,db,ttl)
+          ON CONFLICT (""CacheKeyPattern"", ""DbIndex"") DO NOTHING");
+    Console.WriteLine("[Seed] CacheDefinitions table ensured.");
+
+    // ── MenuItems — DB-backed sidebar menu per role (incl. public Guest menu) ──
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""MenuItems"" (
+            ""Id""            SERIAL PRIMARY KEY,
+            ""Role""          VARCHAR(50)  NOT NULL,
+            ""ItemKey""       VARCHAR(100) NOT NULL,
+            ""Label""         VARCHAR(200) NOT NULL,
+            ""Icon""          VARCHAR(200) NOT NULL,
+            ""RouteTemplate"" VARCHAR(500) NOT NULL,
+            ""SortOrder""     INT          NOT NULL DEFAULT 0,
+            ""IsActive""      BOOLEAN      NOT NULL DEFAULT TRUE,
+            ""ExactMatch""    BOOLEAN      NOT NULL DEFAULT FALSE,
+            ""Badge""         VARCHAR(50),
+            ""Gradient""      VARCHAR(200),
+            ""CreatedAt""     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            ""UpdatedAt""     TIMESTAMPTZ,
+            ""UpdatedBy""     INT,
+            CONSTRAINT ""UQ_MenuItems_Role_Key"" UNIQUE (""Role"", ""ItemKey"")
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_MenuItems_Role_Active""
+            ON ""MenuItems"" (""Role"", ""IsActive"");
+        ALTER TABLE ""MenuItems"" ADD COLUMN IF NOT EXISTS ""Gradient"" VARCHAR(200);
+    ");
+
+    await db.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO ""MenuItems"" (""Role"",""ItemKey"",""Label"",""Icon"",""RouteTemplate"",""SortOrder"",""IsActive"",""ExactMatch"",""Gradient"") VALUES
+        ('SuperAdmin','dashboard','ภาพรวมระบบ','fas fa-chart-pie','/administrator',1,TRUE,TRUE,NULL),
+        ('SuperAdmin','users','จัดการผู้ใช้','fas fa-users','/administrator/users',2,TRUE,FALSE,NULL),
+        ('SuperAdmin','schools','จัดการโรงเรียน','fas fa-school','/administrator/schools',3,TRUE,FALSE,NULL),
+        ('SuperAdmin','areas','จัดการเขตพื้นที่','fas fa-map-marked-alt','/administrator/areas',4,TRUE,FALSE,NULL),
+        ('SuperAdmin','modules','จัดการโมดูล','fas fa-puzzle-piece','/administrator/modules',5,TRUE,FALSE,NULL),
+        ('SuperAdmin','positions','ตำแหน่ง','fas fa-id-badge','/administrator/positions',6,TRUE,FALSE,NULL),
+        ('SuperAdmin','notifications','การแจ้งเตือน','fas fa-bell','/administrator/notifications',7,TRUE,FALSE,NULL),
+        ('SuperAdmin','api-status','สถานะ API','fas fa-heartbeat','/administrator/api-status',8,TRUE,FALSE,NULL),
+        ('SuperAdmin','minio','ที่เก็บไฟล์','fas fa-database','/administrator/minio',9,TRUE,FALSE,NULL),
+        ('SuperAdmin','apikeys','API Keys','fas fa-key','/administrator/apikeys',10,TRUE,FALSE,NULL),
+        ('SuperAdmin','redis','Redis','fas fa-bolt','/administrator/redis',11,TRUE,FALSE,NULL),
+        ('SuperAdmin','rabbitmq','คิวงาน','fas fa-exchange-alt','/administrator/rabbitmq',12,TRUE,FALSE,NULL),
+        ('SuperAdmin','signalr','SignalR','fas fa-satellite-dish','/administrator/signalr',13,TRUE,FALSE,NULL),
+        ('SuperAdmin','mcp','MCP Tools','fas fa-robot','/administrator/mcp',14,TRUE,FALSE,NULL),
+        ('SuperAdmin','menu-management','จัดการเมนู','fas fa-list-ul','/administrator/menu-management',15,TRUE,FALSE,NULL),
+        ('AreaAdmin','dashboard','ภาพรวมเขต','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
+        ('AreaAdmin','schools','โรงเรียน','fas fa-school','{{basePath}}/schools',2,TRUE,FALSE,NULL),
+        ('AreaAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),
+        ('AreaAdmin','teachers','ครู','fas fa-chalkboard-teacher','{{basePath}}/teachers',4,TRUE,FALSE,NULL),
+        ('AreaAdmin','personnel','บุคลากร','fas fa-users','{{basePath}}/personnel',5,TRUE,FALSE,NULL),
+        ('AreaAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',6,TRUE,FALSE,NULL),
+        ('AreaAdmin','policies','สิทธิ์การใช้งาน','fas fa-sliders','{{basePath}}/policies',7,TRUE,FALSE,NULL),
+        ('AreaAdmin','academics','วิชาการ','fas fa-graduation-cap','{{basePath}}/academics',8,TRUE,FALSE,NULL),
+        ('AreaAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',9,TRUE,FALSE,NULL),
+        ('AreaAdmin','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',10,TRUE,FALSE,NULL),
+        ('SchoolAdmin','dashboard','ภาพรวมโรงเรียน','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
+        ('SchoolAdmin','profile','ข้อมูลโรงเรียน','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
+        ('SchoolAdmin','personnel','บุคลากร','fas fa-user-tie','{{basePath}}/personnel',3,TRUE,FALSE,NULL),
+        ('SchoolAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',4,TRUE,FALSE,NULL),
+        ('SchoolAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',5,TRUE,FALSE,NULL),
+        ('SchoolAdmin','settings','ตั้งค่า','fas fa-cog','{{basePath}}/settings',6,TRUE,FALSE,NULL),
+        ('Teacher','dashboard','หน้าหลัก','fas fa-home','{{basePath}}',1,TRUE,TRUE,NULL),
+        ('Teacher','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
+        ('Teacher','my-modules','โมดูลของฉัน','fas fa-puzzle-piece','{{basePath}}/my-modules',3,TRUE,FALSE,NULL),
+        ('Student','dashboard','หน้าหลัก','fas fa-home','{{basePath}}',1,TRUE,TRUE,NULL),
+        ('Student','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
+        ('Student','grades','ผลการเรียน','fas fa-star','{{basePath}}/grades',3,TRUE,FALSE,NULL),
+        ('Student','activities','กิจกรรม','fas fa-running','{{basePath}}/activities',4,TRUE,FALSE,NULL),
+        ('Student','health','สุขภาพ','fas fa-heartbeat','{{basePath}}/health',5,TRUE,FALSE,NULL),
+        ('Student','my-modules','โมดูลของฉัน','fas fa-puzzle-piece','{{basePath}}/my-modules',6,TRUE,FALSE,NULL),
+        ('Guest','home','หน้าแรก','fas fa-home','/',1,TRUE,TRUE,'linear-gradient(135deg,#38bdf8,#818cf8)'),
+        ('Guest','school-info','ข้อมูลทั่วไป','fas fa-school','/school-info',2,TRUE,FALSE,'linear-gradient(135deg,#fbbf24,#f97316)'),
+        ('Guest','student-info','ข้อมูลนักเรียน','fas fa-user-graduate','/student-info',3,TRUE,FALSE,'linear-gradient(135deg,#34d399,#10b981)'),
+        ('Guest','personnel-info','ข้อมูลบุคลากร','fas fa-users','/personnel-info',4,TRUE,FALSE,'linear-gradient(135deg,#a78bfa,#8b5cf6)'),
+        ('Guest','budget-info','ข้อมูลงบประมาณ','fas fa-coins','/budget-info',5,TRUE,FALSE,'linear-gradient(135deg,#f472b6,#ec4899)'),
+        ('Guest','academic-info','ข้อมูลวิชาการ','fas fa-graduation-cap','/academic-info',6,TRUE,FALSE,'linear-gradient(135deg,#818cf8,#6366f1)'),
+        ('Guest','analytics','วิเคราะห์','fas fa-chart-line','/analytics',7,TRUE,FALSE,'linear-gradient(135deg,#38bdf8,#0ea5e9)'),
+        ('Guest','statistics','สถิติ/บริการ','fas fa-chart-bar','/statistics',8,TRUE,FALSE,'linear-gradient(135deg,#fbbf24,#d97706)'),
+        ('Guest','committee','คณะกรรมการ','fas fa-people-group','/committee',9,TRUE,FALSE,'linear-gradient(135deg,#34d399,#059669)')
+        ON CONFLICT (""Role"",""ItemKey"") DO NOTHING");
+    Console.WriteLine("[Seed] MenuItems table ensured.");
 
     if (!await db.Modules.AnyAsync())
     {
