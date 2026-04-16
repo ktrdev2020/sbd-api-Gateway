@@ -81,7 +81,7 @@ public class SchoolController : ControllerBase
                 s.SchoolType,
                 s.IsActive,
                 s.StudentCount,
-                s.TeacherCount,
+                s.PersonnelAssignments.Count(),
                 s.LogoThumbnailUrl
             ))
             .ToListAsync();
@@ -341,16 +341,24 @@ public class SchoolController : ControllerBase
     // ─── Personnel ────────────────────────────────────────────
 
     [HttpGet("{id:int}/personnel")]
-    public async Task<ActionResult<IEnumerable<Personnel>>> GetSchoolPersonnel(int id)
+    public async Task<ActionResult<IEnumerable<SchoolPersonnelItemDto>>> GetSchoolPersonnel(int id)
     {
-        var personnelAssignments = await _context.Set<PersonnelSchoolAssignment>()
+        var personnel = await _context.Set<PersonnelSchoolAssignment>()
             .Where(psa => psa.SchoolId == id)
-            .Include(psa => psa.Personnel)
-                .ThenInclude(p => p.TitlePrefix)
-            .Select(psa => psa.Personnel)
+            .OrderBy(psa => psa.Personnel.PersonnelType)
+            .ThenBy(psa => psa.Personnel.FirstName)
+            .Select(psa => new SchoolPersonnelItemDto(
+                psa.Personnel.Id,
+                psa.Personnel.TitlePrefix != null ? psa.Personnel.TitlePrefix.NameTh : null,
+                psa.Personnel.FirstName,
+                psa.Personnel.LastName,
+                psa.Personnel.PersonnelType,
+                psa.Position ?? (psa.Personnel.PositionType != null ? psa.Personnel.PositionType.NameTh : null),
+                psa.IsPrimary
+            ))
             .ToListAsync();
 
-        return Ok(personnelAssignments);
+        return Ok(personnel);
     }
 
     // ─── Public Endpoints (no auth) ───────────────────────────
@@ -424,7 +432,8 @@ public class SchoolController : ControllerBase
 
         var summary = new SchoolSummaryDto(
             TotalSchools: await activeSchools.CountAsync(),
-            TotalTeachers: await activeSchools.SumAsync(s => s.TeacherCount ?? 0),
+            TotalTeachers: await _context.Set<PersonnelSchoolAssignment>()
+                .CountAsync(psa => activeSchools.Any(s => s.Id == psa.SchoolId)),
             TotalStudents: await activeSchools.SumAsync(s => s.StudentCount ?? 0),
             Districts: await activeSchools
                 .Where(s => s.Address != null && s.Address.SubDistrict != null)
@@ -506,10 +515,14 @@ public class SchoolController : ControllerBase
             .Distinct()
             .ToListAsync();
 
+        var schoolIds = schools.Select(s => s.Id).ToList();
+        var personnelCount = await _context.Set<PersonnelSchoolAssignment>()
+            .CountAsync(psa => schoolIds.Contains(psa.SchoolId));
+
         return Ok(new AreaSchoolsSummaryDto(
             TotalSchools: schools.Count,
             ActiveSchools: schools.Count(s => s.IsActive),
-            TotalTeachers: schools.Sum(s => s.TeacherCount ?? 0),
+            TotalTeachers: personnelCount,
             TotalStudents: schools.Sum(s => s.StudentCount ?? 0),
             Districts: districts
         ));
@@ -725,6 +738,16 @@ public record AreaSchoolsSummaryDto(
     int TotalTeachers,
     int TotalStudents,
     List<string> Districts
+);
+
+public record SchoolPersonnelItemDto(
+    int Id,
+    string? TitlePrefix,
+    string FirstName,
+    string LastName,
+    string PersonnelType,
+    string? Position,
+    bool IsPrimary
 );
 
 public record AssignPrincipalRequest(
