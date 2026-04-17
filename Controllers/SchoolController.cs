@@ -39,6 +39,17 @@ public class SchoolController : ControllerBase
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 50)
     {
+        // Cache only the fully-unfiltered first page (used by school pickers / ref data).
+        // Any filter or pagination bypasses the cache to avoid key collisions.
+        bool isUnfiltered = search == null && areaId == null && district == null
+            && subDistrict == null && isActive == null && offset == 0 && limit == 50;
+
+        if (isUnfiltered)
+        {
+            var cached = await _cache.GetAsync<object>(CacheKey);
+            if (cached != null) return Ok(cached);
+        }
+
         var query = _context.Schools
             .Where(s => s.DeletedAt == null)
             .Include(s => s.Area)
@@ -86,7 +97,12 @@ public class SchoolController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(new { data = schools, total, offset, limit });
+        var result = new { data = schools, total, offset, limit };
+
+        if (isUnfiltered)
+            await _cache.SetAsync(CacheKey, result, TimeSpan.FromHours(1));
+
+        return Ok(result);
     }
 
     [HttpGet("{id:int}")]

@@ -83,6 +83,7 @@ builder.Services.AddMassTransit(x =>
 {
     // Consumers
     x.AddConsumer<Gateway.Consumers.SchoolLogoUpdatedConsumer>();
+    x.AddConsumer<Gateway.Consumers.CacheInvalidateConsumer>();
 
     x.UsingRabbitMq((context, cfg) =>
     {

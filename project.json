@@ -11,7 +11,7 @@
       "continuous": true,
       "options": {
         "commands": [
-          "powershell -File tools/kill-dotnet.ps1 -ExeName Gateway -CsprojPattern Gateway.csproj",
+          "powershell -File ../../../tools/kill-dotnet.ps1 -ExeName Gateway -CsprojPattern Gateway.csproj",
           "dotnet watch run --project Gateway.csproj --no-hot-reload"
         ],
         "parallel": false,
