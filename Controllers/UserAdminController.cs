@@ -14,8 +14,9 @@ namespace Gateway.Controllers;
 /// <summary>
 /// Admin endpoints for comprehensive user management.
 /// SuperAdmin / AreaAdmin / SchoolAdmin access — each role sees only its own scope.
-/// SchoolAdmin access requires AreaPermissionPolicy "user.manage_school_users" = true.
-/// </summary>
+/// SchoolAdmin access is allowed by default; area can block it via AreaPermissionPolicy
+/// "user.manage_school_users" with AllowSchoolAdmin = false (opt-out model).
+///</summary>
 [ApiController]
 [Route("api/v1/admin/users")]
 [Authorize(Roles = "super_admin,area_admin,school_admin,SuperAdmin,AreaAdmin,SchoolAdmin")]
@@ -83,7 +84,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
             return new CallerScope("area_admin", areaId, null, schoolIds, $"area:{areaId}");
         }
 
-        // school_admin — only when the area has enabled "user.manage_school_users"
+        // school_admin — allowed by default; denied only when the area has explicitly
+        // set AllowSchoolAdmin = false for "user.manage_school_users".
+        // No policy entry = permission granted (opt-out model, not opt-in).
         var schoolRole = await db.UserRoles
             .Include(ur => ur.Role)
             .FirstOrDefaultAsync(ur =>
@@ -100,13 +103,14 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
                 .FirstOrDefaultAsync(s => s.Id == schoolId, ct);
             if (school is null) return null;
 
-            var policyAllowed = await db.AreaPermissionPolicies
+            // Opt-out model: denied only if the area has explicitly blocked it.
+            var explicitlyDenied = await db.AreaPermissionPolicies
                 .AnyAsync(p =>
                     p.AreaId == school.AreaId
                     && p.PermissionCode == "user.manage_school_users"
-                    && p.AllowSchoolAdmin, ct);
+                    && !p.AllowSchoolAdmin, ct);
 
-            if (!policyAllowed) return null; // 403 will be returned by callers
+            if (explicitlyDenied) return null;
             return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}");
         }
 
