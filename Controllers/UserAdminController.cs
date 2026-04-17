@@ -84,9 +84,10 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
             return new CallerScope("area_admin", areaId, null, schoolIds, $"area:{areaId}");
         }
 
-        // school_admin — allowed by default; denied only when the area has explicitly
-        // set AllowSchoolAdmin = false for "user.manage_school_users".
-        // No policy entry = permission granted (opt-out model, not opt-in).
+        // school_admin — 3-tier resolution for "user.manage_school_users":
+        //   1. School-specific policy (SchoolId = this school) → use its AllowSchoolAdmin.
+        //   2. Area-wide policy (SchoolId = null) → use its AllowSchoolAdmin.
+        //   3. No policy at all → allow by default (opt-out model).
         var schoolRole = await db.UserRoles
             .Include(ur => ur.Role)
             .FirstOrDefaultAsync(ur =>
@@ -103,14 +104,32 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
                 .FirstOrDefaultAsync(s => s.Id == schoolId, ct);
             if (school is null) return null;
 
-            // Opt-out model: denied only if the area has explicitly blocked it.
-            var explicitlyDenied = await db.AreaPermissionPolicies
-                .AnyAsync(p =>
-                    p.AreaId == school.AreaId
-                    && p.PermissionCode == "user.manage_school_users"
-                    && !p.AllowSchoolAdmin, ct);
+            const string code = "user.manage_school_users";
 
-            if (explicitlyDenied) return null;
+            // Tier 1: school-specific override
+            var schoolPolicy = await db.AreaPermissionPolicies
+                .FirstOrDefaultAsync(p =>
+                    p.AreaId == school.AreaId
+                    && p.SchoolId == schoolId
+                    && p.PermissionCode == code, ct);
+
+            if (schoolPolicy is not null)
+            {
+                if (!schoolPolicy.AllowSchoolAdmin) return null;
+            }
+            else
+            {
+                // Tier 2: area-wide policy (SchoolId IS NULL)
+                var areaPolicy = await db.AreaPermissionPolicies
+                    .FirstOrDefaultAsync(p =>
+                        p.AreaId == school.AreaId
+                        && p.SchoolId == null
+                        && p.PermissionCode == code, ct);
+
+                if (areaPolicy is not null && !areaPolicy.AllowSchoolAdmin) return null;
+                // Tier 3: no policy → allowed
+            }
+
             return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}");
         }
 

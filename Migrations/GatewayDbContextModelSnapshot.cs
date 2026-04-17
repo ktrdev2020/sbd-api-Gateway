@@ -335,6 +335,9 @@ namespace Gateway.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int?>("SchoolId")
+                        .HasColumnType("integer");
+
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -343,8 +346,18 @@ namespace Gateway.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SchoolId")
+                        .HasDatabaseName("IX_AreaPermissionPolicies_SchoolId");
+
                     b.HasIndex("AreaId", "PermissionCode")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"SchoolId\" IS NULL")
+                        .HasDatabaseName("IX_AreaPermissionPolicies_Area_Global");
+
+                    b.HasIndex("AreaId", "SchoolId", "PermissionCode")
+                        .IsUnique()
+                        .HasFilter("\"SchoolId\" IS NOT NULL")
+                        .HasDatabaseName("IX_AreaPermissionPolicies_Area_School");
 
                     b.ToTable("AreaPermissionPolicies");
                 });
@@ -2365,7 +2378,14 @@ namespace Gateway.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("SBD.Domain.Entities.School", "School")
+                        .WithMany()
+                        .HasForeignKey("SchoolId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.Navigation("Area");
+
+                    b.Navigation("School");
                 });
 
             modelBuilder.Entity("SBD.Domain.Entities.BestPractice", b =>
