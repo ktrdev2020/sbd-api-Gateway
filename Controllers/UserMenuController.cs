@@ -147,29 +147,29 @@ public class UserMenuController : ControllerBase
     // Module queries by context
     // -------------------------------------------------------------------------
 
-    /// <summary>SuperAdmin: all enabled modules.</summary>
+    /// <summary>SuperAdmin: all enabled non-core modules (Core category = structural nav handled by CoreMenuItems).</summary>
     private async Task<List<UserMenuItemDto>> GetAllEnabledModules()
     {
         return await _db.Modules
             .AsNoTracking()
-            .Where(m => m.IsEnabled)
+            .Where(m => m.IsEnabled && m.Category != "Core")
             .OrderBy(m => m.SortOrder)
             .Select(m => ToDto(m))
             .ToListAsync();
     }
 
-    /// <summary>Fallback: modules by visibility level string.</summary>
+    /// <summary>Fallback: feature modules by visibility level string (excludes Core category).</summary>
     private async Task<List<UserMenuItemDto>> GetModulesByVisibility(string level)
     {
         return await _db.Modules
             .AsNoTracking()
-            .Where(m => m.IsEnabled && m.VisibilityLevels.Contains(level))
+            .Where(m => m.IsEnabled && m.Category != "Core" && m.VisibilityLevels.Contains(level))
             .OrderBy(m => m.SortOrder)
             .Select(m => ToDto(m))
             .ToListAsync();
     }
 
-    /// <summary>AreaAdmin: modules assigned to their area + globally visible area modules.</summary>
+    /// <summary>AreaAdmin: feature modules assigned to their area + globally visible area modules (excludes Core category).</summary>
     private async Task<List<UserMenuItemDto>> GetAreaModules(int areaId)
     {
         // Modules explicitly assigned to this area
@@ -178,24 +178,25 @@ public class UserMenuController : ControllerBase
             .Select(ama => ama.ModuleId)
             .ToListAsync();
 
-        // All enabled modules visible at area level OR explicitly assigned
+        // Feature modules visible at area level OR explicitly assigned
+        // Core category is excluded — structural navigation is served by CoreMenuItems table
         return await _db.Modules
             .AsNoTracking()
-            .Where(m => m.IsEnabled && (
+            .Where(m => m.IsEnabled && m.Category != "Core" && (
                 m.VisibilityLevels.Contains("area") || assignedModuleIds.Contains(m.Id)))
             .OrderBy(m => m.SortOrder)
             .Select(m => ToDto(m))
             .ToListAsync();
     }
 
-    /// <summary>SchoolAdmin: modules installed in their school.</summary>
+    /// <summary>SchoolAdmin: feature modules installed in their school (excludes Core category).</summary>
     private async Task<List<UserMenuItemDto>> GetSchoolInstalledModules(int schoolId)
     {
         return await _db.SchoolModules
             .AsNoTracking()
             .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
             .Include(sm => sm.Module)
-            .Where(sm => sm.Module.IsEnabled)
+            .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core")
             .OrderBy(sm => sm.Module.SortOrder)
             .Select(sm => ToDto(sm.Module))
             .ToListAsync();
@@ -222,12 +223,12 @@ public class UserMenuController : ControllerBase
                 .ToListAsync()
             : new List<int>();
 
-        // School modules visible to teacher
+        // School feature modules visible to teacher (Core category excluded)
         var schoolModules = await _db.SchoolModules
             .AsNoTracking()
             .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
             .Include(sm => sm.Module)
-            .Where(sm => sm.Module.IsEnabled && sm.Module.VisibilityLevels.Contains("teacher"))
+            .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core" && sm.Module.VisibilityLevels.Contains("teacher"))
             .OrderBy(sm => sm.Module.SortOrder)
             .ToListAsync();
 
@@ -260,12 +261,12 @@ public class UserMenuController : ControllerBase
                 .ToListAsync()
             : new List<int>();
 
-        // School modules visible to student
+        // School feature modules visible to student (Core category excluded)
         var schoolModules = await _db.SchoolModules
             .AsNoTracking()
             .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
             .Include(sm => sm.Module)
-            .Where(sm => sm.Module.IsEnabled && sm.Module.VisibilityLevels.Contains("student"))
+            .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core" && sm.Module.VisibilityLevels.Contains("student"))
             .OrderBy(sm => sm.Module.SortOrder)
             .ToListAsync();
 
