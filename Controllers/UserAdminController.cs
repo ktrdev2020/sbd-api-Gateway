@@ -13,11 +13,12 @@ namespace Gateway.Controllers;
 
 /// <summary>
 /// Admin endpoints for comprehensive user management.
-/// SuperAdmin / AreaAdmin access only.
+/// SuperAdmin / AreaAdmin / SchoolAdmin access — each role sees only its own scope.
+/// SchoolAdmin access requires AreaPermissionPolicy "user.manage_school_users" = true.
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/users")]
-[Authorize(Roles = "super_admin,area_admin,SuperAdmin,AreaAdmin")]
+[Authorize(Roles = "super_admin,area_admin,school_admin,SuperAdmin,AreaAdmin,SchoolAdmin")]
 public class UserAdminController(SbdDbContext db, ICacheService cache) : ControllerBase
 {
     // ─── Cache key helpers ────────────────────────────────────────────────────
@@ -26,17 +27,110 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     private static readonly TimeSpan DetailTtl = TimeSpan.FromMinutes(2);
 
     private const string ListPrefix   = "admin:users:list:";
-    private const string StatsKey     = "admin:users:stats";
+    private const string StatsPrefix  = "admin:users:stats:";
     private static string DetailKey(int id) => $"admin:users:detail:{id}";
 
+    // ─── Scope-aware cache helpers — prevents cross-caller cache pollution ────
+    private static string ScopedStatsKey(string scopeTag)  => $"{StatsPrefix}{scopeTag}";
     private static string ListCacheKey(
+        string scopeTag,
         string? search, string? role, string? provider, string? district,
         int? schoolId, string? status, string? positionType, string? subjectArea,
         int page, int pageSize)
     {
-        var raw = $"{search}|{role}|{provider}|{district}|{schoolId}|{status}|{positionType}|{subjectArea}|{page}|{pageSize}";
+        var raw = $"{scopeTag}|{search}|{role}|{provider}|{district}|{schoolId}|{status}|{positionType}|{subjectArea}|{page}|{pageSize}";
         var hash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..16];
         return $"{ListPrefix}{hash}";
+    }
+
+    // ─── Caller scope resolution ──────────────────────────────────────────────
+    // Returns null when the caller's role can't be resolved or the school_admin's
+    // area has not granted them user-management permission.
+
+    private record CallerScope(
+        string Role,
+        int? AreaId,
+        int? SchoolId,
+        IReadOnlyList<int> AllowedSchoolIds,
+        string CacheTag);
+
+    private async Task<CallerScope?> GetCallerScopeAsync(CancellationToken ct = default)
+    {
+        // super_admin — unrestricted
+        if (User.IsInRole("super_admin") || User.IsInRole("SuperAdmin"))
+            return new CallerScope("super_admin", null, null, Array.Empty<int>(), "global");
+
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!int.TryParse(userIdStr, out var userId)) return null;
+
+        // area_admin — scoped to their area's schools
+        var areaRole = await db.UserRoles
+            .Include(ur => ur.Role)
+            .FirstOrDefaultAsync(ur =>
+                ur.UserId == userId
+                && ur.Role.Code == "area_admin"
+                && ur.ScopeType == "Area"
+                && ur.ScopeId.HasValue, ct);
+
+        if (areaRole is not null)
+        {
+            var areaId = areaRole.ScopeId!.Value;
+            var schoolIds = await db.Schools
+                .AsNoTracking()
+                .Where(s => s.AreaId == areaId)
+                .Select(s => s.Id)
+                .ToListAsync(ct);
+            return new CallerScope("area_admin", areaId, null, schoolIds, $"area:{areaId}");
+        }
+
+        // school_admin — only when the area has enabled "user.manage_school_users"
+        var schoolRole = await db.UserRoles
+            .Include(ur => ur.Role)
+            .FirstOrDefaultAsync(ur =>
+                ur.UserId == userId
+                && ur.Role.Code == "school_admin"
+                && ur.ScopeType == "School"
+                && ur.ScopeId.HasValue, ct);
+
+        if (schoolRole is not null)
+        {
+            var schoolId = schoolRole.ScopeId!.Value;
+            var school   = await db.Schools.AsNoTracking()
+                .Select(s => new { s.Id, s.AreaId })
+                .FirstOrDefaultAsync(s => s.Id == schoolId, ct);
+            if (school is null) return null;
+
+            var policyAllowed = await db.AreaPermissionPolicies
+                .AnyAsync(p =>
+                    p.AreaId == school.AreaId
+                    && p.PermissionCode == "user.manage_school_users"
+                    && p.AllowSchoolAdmin, ct);
+
+            if (!policyAllowed) return null; // 403 will be returned by callers
+            return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}");
+        }
+
+        return null;
+    }
+
+    // Returns true when the caller (area_admin / school_admin) is allowed to act on the given user.
+    // For super_admin the check is always skipped (AllowedSchoolIds empty = unrestricted).
+    private static bool IsInScope(CallerScope scope, IEnumerable<int> userSchoolIds)
+    {
+        if (scope.Role == "super_admin") return true;
+        if (scope.AllowedSchoolIds.Count == 0) return false;
+        return userSchoolIds.Any(id => scope.AllowedSchoolIds.Contains(id));
+    }
+
+    // Applies scope restriction to a User query (before counting / fetching).
+    private static IQueryable<User> ApplyScopeFilter(IQueryable<User> query, CallerScope scope)
+    {
+        if (scope.Role == "super_admin") return query;
+        if (scope.AllowedSchoolIds.Count == 0) return query.Where(_ => false);
+        return query.Where(u =>
+            u.Personnel != null &&
+            u.Personnel.SchoolAssignments.Any(sa =>
+                sa.IsPrimary && scope.AllowedSchoolIds.Contains(sa.SchoolId)));
     }
 
     // ─── Cache helpers (graceful — never throw) ───────────────────────────────
@@ -83,11 +177,17 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         [FromQuery] int pageSize = 30,
         CancellationToken ct = default)
     {
-        var cacheKey = ListCacheKey(search, role, provider, district, schoolId, status, positionType, subjectArea, page, pageSize);
+        var scope = await GetCallerScopeAsync(ct);
+        if (scope is null) return Forbid();
+
+        // school_admin can only browse their own school — ignore schoolId param
+        if (scope.Role == "school_admin") schoolId = scope.SchoolId;
+
+        var cacheKey = ListCacheKey(scope.CacheTag, search, role, provider, district, schoolId, status, positionType, subjectArea, page, pageSize);
         var cached   = await TryGetCache<object>(cacheKey);
         if (cached is not null) return Ok(cached);
 
-        var query = db.Users
+        var query = ApplyScopeFilter(db.Users
             .AsNoTracking()
             .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
             .Include(u => u.LoginProviders)
@@ -101,7 +201,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
                         .ThenInclude(s => s.Address!)
                             .ThenInclude(a => a.SubDistrict)
                                 .ThenInclude(sd => sd.District)
-            .AsQueryable();
+            .AsQueryable(), scope);
 
         // ── Text search ────────────────────────────────────────────────────
         if (!string.IsNullOrWhiteSpace(search))
@@ -259,36 +359,68 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     [HttpGet("stats")]
     public async Task<IActionResult> GetStats(CancellationToken ct = default)
     {
-        var cachedStats = await TryGetCache<object>(StatsKey);
+        var scope = await GetCallerScopeAsync(ct);
+        if (scope is null) return Forbid();
+
+        var statsKey = ScopedStatsKey(scope.CacheTag);
+        var cachedStats = await TryGetCache<object>(statsKey);
         if (cachedStats is not null) return Ok(cachedStats);
 
         var now = DateTimeOffset.UtcNow;
         var startOfMonth = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
 
-        var total = await db.Users.CountAsync(ct);
-        var active = await db.Users.CountAsync(u => u.IsActive, ct);
-        var withPersonnel = await db.Users.CountAsync(u => u.Personnel != null, ct);
-        var withAvatar = await db.Users.CountAsync(u => u.AvatarUrl != null, ct);
-        var profileUpdated = await db.Users.CountAsync(u => u.UpdatedAt != null, ct);
-        var newThisMonth = await db.Users.CountAsync(u => u.CreatedAt >= startOfMonth, ct);
+        // Base scoped query
+        var baseQuery = ApplyScopeFilter(db.Users.AsNoTracking()
+            .Include(u => u.Personnel)
+                .ThenInclude(p => p!.SchoolAssignments), scope);
 
-        var byRole = await db.UserRoles
-            .Include(ur => ur.Role)
-            .GroupBy(ur => ur.Role.Code)
-            .Select(g => new { Code = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
+        var total = await baseQuery.CountAsync(ct);
+        var active = await baseQuery.CountAsync(u => u.IsActive, ct);
+        var withPersonnel = await baseQuery.CountAsync(u => u.Personnel != null, ct);
+        var withAvatar = await baseQuery.CountAsync(u => u.AvatarUrl != null, ct);
+        var profileUpdated = await baseQuery.CountAsync(u => u.UpdatedAt != null, ct);
+        var newThisMonth = await baseQuery.CountAsync(u => u.CreatedAt >= startOfMonth, ct);
 
-        var byProvider = await db.UserLoginProviders
-            .GroupBy(lp => lp.Provider)
-            .Select(g => new { Provider = g.Key, Count = g.Select(x => x.UserId).Distinct().Count() })
-            .ToListAsync(ct);
+        // Scope-aware: join through Personnel→SchoolAssignments for non-super_admin
+        var scopedUserIds = scope.Role == "super_admin"
+            ? null
+            : await baseQuery.Select(u => u.Id).ToListAsync(ct);
 
-        var districts = await db.PersonnelSchoolAssignments
+        var byRole = scope.Role == "super_admin"
+            ? await db.UserRoles
+                .Include(ur => ur.Role)
+                .GroupBy(ur => ur.Role.Code)
+                .Select(g => new { Code = g.Key, Count = g.Count() })
+                .ToListAsync(ct)
+            : await db.UserRoles
+                .Include(ur => ur.Role)
+                .Where(ur => scopedUserIds!.Contains(ur.UserId))
+                .GroupBy(ur => ur.Role.Code)
+                .Select(g => new { Code = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+
+        var byProvider = scope.Role == "super_admin"
+            ? await db.UserLoginProviders
+                .GroupBy(lp => lp.Provider)
+                .Select(g => new { Provider = g.Key, Count = g.Select(x => x.UserId).Distinct().Count() })
+                .ToListAsync(ct)
+            : await db.UserLoginProviders
+                .Where(lp => scopedUserIds!.Contains(lp.UserId))
+                .GroupBy(lp => lp.Provider)
+                .Select(g => new { Provider = g.Key, Count = g.Select(x => x.UserId).Distinct().Count() })
+                .ToListAsync(ct);
+
+        var districtQuery = db.PersonnelSchoolAssignments
             .AsNoTracking()
             .Where(sa =>
                 sa.IsPrimary &&
                 sa.Personnel.UserId != null &&
-                sa.School.Address != null)
+                sa.School.Address != null);
+
+        if (scope.Role != "super_admin" && scope.AllowedSchoolIds.Count > 0)
+            districtQuery = districtQuery.Where(sa => scope.AllowedSchoolIds.Contains(sa.SchoolId));
+
+        var districts = await districtQuery
             .Select(sa => new
             {
                 DistrictName = sa.School.Address!.SubDistrict.District.NameTh,
@@ -326,7 +458,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
             },
             Districts = districts,
         };
-        await TrySetCache(StatsKey, statsResult, StatsTtl);
+        await TrySetCache(statsKey, statsResult, StatsTtl);
         return Ok(statsResult);
     }
 
@@ -337,8 +469,24 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetUser(int id, CancellationToken ct = default)
     {
+        var scope = await GetCallerScopeAsync(ct);
+        if (scope is null) return Forbid();
+
         var cachedDetail = await TryGetCache<object>(DetailKey(id));
-        if (cachedDetail is not null) return Ok(cachedDetail);
+        if (cachedDetail is not null)
+        {
+            // For non-super_admin: scope-check the cached result via a lightweight DB check
+            if (scope.Role != "super_admin")
+            {
+                var schoolIds = await db.PersonnelSchoolAssignments
+                    .AsNoTracking()
+                    .Where(sa => sa.IsPrimary && sa.Personnel.UserId == id)
+                    .Select(sa => sa.SchoolId)
+                    .ToListAsync(ct);
+                if (!IsInScope(scope, schoolIds)) return Forbid();
+            }
+            return Ok(cachedDetail);
+        }
 
         var user = await db.Users
             .AsNoTracking()
@@ -357,6 +505,14 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
             .FirstOrDefaultAsync(u => u.Id == id, ct);
 
         if (user is null) return NotFound();
+
+        // Scope guard — can this caller access this user?
+        if (scope.Role != "super_admin")
+        {
+            var userSchoolIds = user.Personnel?.SchoolAssignments
+                .Where(sa => sa.IsPrimary).Select(sa => sa.SchoolId) ?? Enumerable.Empty<int>();
+            if (!IsInScope(scope, userSchoolIds)) return Forbid();
+        }
 
         var prefs = string.IsNullOrEmpty(user.PreferencesJson)
             ? new Dictionary<string, string?>()
@@ -489,12 +645,35 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     // PUT /api/v1/admin/users/{id}
     // ─────────────────────────────────────────────────────────────────────────
 
+    // ─── Scope guard for mutations — resolves scope and checks if target user is accessible.
+    // Returns (scope, null) on success, or (null, IActionResult) when access should be denied.
+    private async Task<(CallerScope? scope, IActionResult? deny)> GuardMutationAsync(
+        int targetUserId, CancellationToken ct)
+    {
+        var scope = await GetCallerScopeAsync(ct);
+        if (scope is null) return (null, Forbid());
+
+        if (scope.Role != "super_admin")
+        {
+            var schoolIds = await db.PersonnelSchoolAssignments
+                .AsNoTracking()
+                .Where(sa => sa.IsPrimary && sa.Personnel.UserId == targetUserId)
+                .Select(sa => sa.SchoolId)
+                .ToListAsync(ct);
+            if (!IsInScope(scope, schoolIds)) return (null, Forbid());
+        }
+        return (scope, null);
+    }
+
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateUser(
         int id,
         [FromBody] UpdateUserRequest request,
         CancellationToken ct = default)
     {
+        var (_, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
         var user = await db.Users.FindAsync([id], ct);
         if (user is null) return NotFound();
 
@@ -515,7 +694,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         await db.SaveChangesAsync(ct);
         await Task.WhenAll(
             TryInvalidateListCache(),
-            TryRemoveCache(StatsKey, DetailKey(id)));
+            cache.RemoveByPrefixAsync(StatsPrefix).ContinueWith(_ => { }),
+            TryRemoveCache(DetailKey(id)));
         return Ok(new { user.Id, user.DisplayName, user.Email, user.Phone, user.IsActive });
     }
 
@@ -526,6 +706,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     [HttpPut("{id:int}/toggle-active")]
     public async Task<IActionResult> ToggleActive(int id, CancellationToken ct = default)
     {
+        var (_, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
         var user = await db.Users.FindAsync([id], ct);
         if (user is null) return NotFound();
 
@@ -535,7 +718,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         await db.SaveChangesAsync(ct);
         await Task.WhenAll(
             TryInvalidateListCache(),
-            TryRemoveCache(StatsKey, DetailKey(id)));
+            cache.RemoveByPrefixAsync(StatsPrefix).ContinueWith(_ => { }),
+            TryRemoveCache(DetailKey(id)));
         return Ok(new { user.Id, user.IsActive });
     }
 
@@ -546,6 +730,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeactivateUser(int id, CancellationToken ct = default)
     {
+        var (_, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
         var user = await db.Users.FindAsync([id], ct);
         if (user is null) return NotFound();
 
@@ -555,7 +742,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         await db.SaveChangesAsync(ct);
         await Task.WhenAll(
             TryInvalidateListCache(),
-            TryRemoveCache(StatsKey, DetailKey(id)));
+            cache.RemoveByPrefixAsync(StatsPrefix).ContinueWith(_ => { }),
+            TryRemoveCache(DetailKey(id)));
         return Ok(new { user.Id, user.IsActive, Message = "ปิดการใช้งานบัญชีเรียบร้อยแล้ว" });
     }
 
@@ -566,6 +754,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     [HttpPost("{id:int}/reset-password")]
     public async Task<IActionResult> ResetPassword(int id, CancellationToken ct = default)
     {
+        var (_, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
         var provider = await db.UserLoginProviders
             .FirstOrDefaultAsync(lp => lp.UserId == id && lp.Provider == "local", ct);
 
@@ -579,7 +770,6 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         if (user != null) user.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
-        // Reset password doesn't affect the list, only clear detail cache
         await TryRemoveCache(DetailKey(id));
         return Ok(new { TempPassword = tempPassword, Message = "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว กรุณาแจ้งรหัสชั่วคราวแก่ผู้ใช้" });
     }
@@ -594,6 +784,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         [FromBody] UpdateContactsRequest request,
         CancellationToken ct = default)
     {
+        var (_, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
         var user = await db.Users.FindAsync([id], ct);
         if (user is null) return NotFound();
 
@@ -619,6 +812,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     // ─────────────────────────────────────────────────────────────────────────
 
     [HttpPost("sync-from-personnel")]
+    [Authorize(Roles = "super_admin,area_admin,SuperAdmin,AreaAdmin")] // school_admin cannot sync
     public async Task<IActionResult> SyncFromPersonnel(CancellationToken ct = default)
     {
         // ── 1. Load all unlinked personnel (with needed navigations) ──────────
@@ -865,7 +1059,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         // Sync affects everything — clear all user caches
         await Task.WhenAll(
             TryInvalidateListCache(),
-            TryRemoveCache(StatsKey));
+            cache.RemoveByPrefixAsync(StatsPrefix).ContinueWith(_ => { }));
 
         return Ok(new
         {

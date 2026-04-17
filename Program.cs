@@ -1015,6 +1015,8 @@ using (var scope = app.Services.CreateScope())
          "อนุญาตให้บุคลากรแก้ไขวันเกิดของตนเอง"),
         ("personnel.self_edit_education",
          "อนุญาตให้บุคลากรเพิ่ม/แก้ไข/ลบประวัติการศึกษาของตนเอง"),
+        ("user.manage_school_users",
+         "อนุญาตให้ผู้บริหารสถานศึกษาจัดการบัญชีผู้ใช้งานในโรงเรียนของตนเอง"),
     };
     var areas = await db.Areas.AsNoTracking().Select(a => a.Id).ToListAsync();
     foreach (var areaId in areas)
