@@ -888,17 +888,19 @@ using (var scope = app.Services.CreateScope())
         ('AreaAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),
         ('AreaAdmin','teachers','ครู','fas fa-chalkboard-teacher','{{basePath}}/teachers',4,TRUE,FALSE,NULL),
         ('AreaAdmin','personnel','บุคลากร','fas fa-users','{{basePath}}/personnel',5,TRUE,FALSE,NULL),
-        ('AreaAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',6,TRUE,FALSE,NULL),
-        ('AreaAdmin','policies','สิทธิ์การใช้งาน','fas fa-sliders','{{basePath}}/policies',7,TRUE,FALSE,NULL),
-        ('AreaAdmin','academics','วิชาการ','fas fa-graduation-cap','{{basePath}}/academics',8,TRUE,FALSE,NULL),
-        ('AreaAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',9,TRUE,FALSE,NULL),
-        ('AreaAdmin','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',10,TRUE,FALSE,NULL),
+        ('AreaAdmin','users','จัดการผู้ใช้','fas fa-users-cog','{{basePath}}/users',6,TRUE,FALSE,NULL),
+        ('AreaAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',7,TRUE,FALSE,NULL),
+        ('AreaAdmin','policies','สิทธิ์การใช้งาน','fas fa-sliders','{{basePath}}/policies',8,TRUE,FALSE,NULL),
+        ('AreaAdmin','academics','วิชาการ','fas fa-graduation-cap','{{basePath}}/academics',9,TRUE,FALSE,NULL),
+        ('AreaAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',10,TRUE,FALSE,NULL),
+        ('AreaAdmin','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',11,TRUE,FALSE,NULL),
         ('SchoolAdmin','dashboard','ภาพรวมโรงเรียน','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
         ('SchoolAdmin','profile','ข้อมูลโรงเรียน','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('SchoolAdmin','personnel','บุคลากร','fas fa-user-tie','{{basePath}}/personnel',3,TRUE,FALSE,NULL),
-        ('SchoolAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',4,TRUE,FALSE,NULL),
-        ('SchoolAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',5,TRUE,FALSE,NULL),
-        ('SchoolAdmin','settings','ตั้งค่า','fas fa-cog','{{basePath}}/settings',6,TRUE,FALSE,NULL),
+        ('SchoolAdmin','users','จัดการผู้ใช้','fas fa-users-cog','{{basePath}}/users',4,TRUE,FALSE,NULL),
+        ('SchoolAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',5,TRUE,FALSE,NULL),
+        ('SchoolAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',6,TRUE,FALSE,NULL),
+        ('SchoolAdmin','settings','ตั้งค่า','fas fa-cog','{{basePath}}/settings',7,TRUE,FALSE,NULL),
         ('Teacher','dashboard','หน้าหลัก','fas fa-home','{{basePath}}',1,TRUE,TRUE,NULL),
         ('Teacher','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('Teacher','my-modules','โมดูลของฉัน','fas fa-puzzle-piece','{{basePath}}/my-modules',3,TRUE,FALSE,NULL),
@@ -917,8 +919,33 @@ using (var scope = app.Services.CreateScope())
         ('Guest','analytics','วิเคราะห์','fas fa-chart-line','/analytics',7,TRUE,FALSE,'linear-gradient(135deg,#38bdf8,#0ea5e9)'),
         ('Guest','statistics','สถิติ/บริการ','fas fa-chart-bar','/statistics',8,TRUE,FALSE,'linear-gradient(135deg,#fbbf24,#d97706)'),
         ('Guest','committee','คณะกรรมการ','fas fa-people-group','/committee',9,TRUE,FALSE,'linear-gradient(135deg,#34d399,#059669)')
-        ON CONFLICT (""Role"",""ItemKey"") DO NOTHING");
+        ON CONFLICT (""Role"",""ItemKey"") DO UPDATE SET
+            ""Label""         = EXCLUDED.""Label"",
+            ""Icon""          = EXCLUDED.""Icon"",
+            ""RouteTemplate"" = EXCLUDED.""RouteTemplate"",
+            ""SortOrder""     = EXCLUDED.""SortOrder"",
+            ""ExactMatch""    = EXCLUDED.""ExactMatch"",
+            ""Gradient""      = EXCLUDED.""Gradient""
+        -- IsActive is intentionally NOT updated: admins can toggle items via menu-management
+        ");
     Console.WriteLine("[Seed] MenuItems table ensured.");
+
+    // Invalidate Redis menu caches so the updated seed is served immediately on first request
+    try
+    {
+        var redis = app.Services.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>();
+        var redisDb = redis.GetDatabase();
+        await redisDb.KeyDeleteAsync(new StackExchange.Redis.RedisKey[]
+        {
+            "menu:core:SuperAdmin", "menu:core:AreaAdmin", "menu:core:SchoolAdmin",
+            "menu:core:Teacher",    "menu:core:Student",   "menu:core:Guest",
+        });
+        Console.WriteLine("[Seed] Menu Redis caches invalidated.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Seed] Redis menu cache invalidation skipped: {ex.Message}");
+    }
 
     if (!await db.Modules.AnyAsync())
     {
