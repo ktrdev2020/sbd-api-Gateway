@@ -71,7 +71,7 @@ public class SchoolModuleController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
-        if (school.AreaId == null)
+        if (school.AreaId == 0)
             return Ok(new List<object>());
 
         // Installed module IDs for this school — used to exclude from the available list

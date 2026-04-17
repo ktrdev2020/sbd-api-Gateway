@@ -677,7 +677,7 @@ public class SchoolController : ControllerBase
                 p.FirstName,
                 p.LastName,
                 FullName = p.FirstName + " " + p.LastName,
-                Position = p.SchoolAssignments.First().Position ?? "ผู้บริหารสถานศึกษา",
+                Position = (string?)(p.SchoolAssignments.First().Position ?? "ผู้บริหารสถานศึกษา"),
                 p.PersonnelType,
                 CurrentSchoolId = p.SchoolAssignments.First().SchoolId,
                 CurrentSchoolName = p.SchoolAssignments.First().School.NameTh
