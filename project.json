@@ -10,12 +10,16 @@
       "executor": "nx:run-commands",
       "continuous": true,
       "options": {
-        "command": "dotnet watch run --project Gateway.csproj --no-hot-reload",
+        "commands": [
+          "powershell -File tools/kill-dotnet.ps1 -ExeName Gateway -CsprojPattern Gateway.csproj",
+          "dotnet watch run --project Gateway.csproj --no-hot-reload"
+        ],
+        "parallel": false,
         "cwd": "apps/dotnet/Gateway"
       }
     },
     "stop": {
-      "command": "powershell -Command \"Get-Process -Name Gateway -EA SilentlyContinue | Stop-Process -Force\""
+      "command": "powershell -File tools/kill-dotnet.ps1 -ExeName Gateway -CsprojPattern Gateway.csproj"
     },
     "db-migrate": {
       "executor": "nx:run-commands",
