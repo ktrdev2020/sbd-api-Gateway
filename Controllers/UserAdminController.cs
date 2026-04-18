@@ -3,11 +3,13 @@ using System.Security.Cryptography;
 using System.Text;
 using BCrypt.Net;
 using Gateway.Services;
+using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
+using SBD.Messaging.Commands;
 
 namespace Gateway.Controllers;
 
@@ -20,7 +22,7 @@ namespace Gateway.Controllers;
 [ApiController]
 [Route("api/v1/admin/users")]
 [Authorize(Roles = "super_admin,area_admin,school_admin,SuperAdmin,AreaAdmin,SchoolAdmin")]
-public class UserAdminController(SbdDbContext db, ICacheService cache) : ControllerBase
+public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishEndpoint bus) : ControllerBase
 {
     // ─── Cache key helpers ────────────────────────────────────────────────────
     private static readonly TimeSpan ListTtl   = TimeSpan.FromMinutes(5);
@@ -1117,6 +1119,55 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
             Repaired      = repairedCount,
             RolesAssigned = rolesAssignedCount,
         });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /api/v1/admin/users/verify-area-logins
+    // AreaAdmin triggers a login-credential audit for their entire area.
+    // WorkerService does the actual check and publishes the result back via
+    // LoginVerificationCompletedEvent → RealtimeService → SignalR notification.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [HttpPost("verify-area-logins")]
+    [Authorize(Roles = "area_admin,super_admin,AreaAdmin,SuperAdmin")]
+    public async Task<IActionResult> VerifyAreaLogins(CancellationToken ct = default)
+    {
+        var scope = await GetCallerScopeAsync(ct);
+        if (scope is null) return Forbid();
+        if (scope.Role != "area_admin" && scope.Role != "super_admin") return Forbid();
+        if (scope.AreaId is null) return BadRequest(new { Error = "ระบุ AreaId ไม่ได้" });
+
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!int.TryParse(userIdStr, out var requesterId)) return Forbid();
+
+        await bus.Publish(new VerifyAreaLoginsCommand
+        {
+            AreaId            = scope.AreaId.Value,
+            RequestedByUserId = requesterId,
+        }, ct);
+
+        return Accepted(new { Message = "อยู่ระหว่างตรวจสอบ — รอการแจ้งเตือนผลลัพธ์" });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/v1/admin/users/manage-permission
+    // SchoolAdmin calls this on page load to know whether the area has granted
+    // the "user.manage_school_users" capability for their school.
+    // Returns { canManage: bool, schoolId: int }.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [HttpGet("manage-permission")]
+    public async Task<IActionResult> GetManagePermission(CancellationToken ct = default)
+    {
+        var scope = await GetCallerScopeAsync(ct);
+
+        // super_admin and area_admin can always manage
+        if (scope?.Role is "super_admin" or "area_admin")
+            return Ok(new { canManage = true, schoolId = scope.SchoolId });
+
+        // school_admin: GetCallerScopeAsync already runs the 3-tier check —
+        // null means permission denied, non-null means allowed.
+        return Ok(new { canManage = scope is not null, schoolId = scope?.SchoolId });
     }
 
     /// <summary>
