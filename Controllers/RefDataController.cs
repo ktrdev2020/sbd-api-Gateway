@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Domain.Entities;
 using SBD.Infrastructure.Data;
+using System.Collections.Generic;
 
 namespace Gateway.Controllers;
 
@@ -163,6 +164,47 @@ public class RefDataController : ControllerBase
         var data = await _context.EducationLevels.AsNoTracking()
             .Where(e => e.IsActive)
             .OrderBy(e => e.Level)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
+
+    [HttpGet("specialties")]
+    public async Task<ActionResult> GetSpecialties([FromQuery] string? category)
+    {
+        const string cacheKey = "refdata:specialties";
+        var cached = await _cache.GetAsync<List<Specialty>>(cacheKey);
+        if (cached != null)
+        {
+            var filtered = string.IsNullOrEmpty(category)
+                ? cached.Where(s => s.IsActive)
+                : cached.Where(s => s.IsActive && s.Category == category);
+            return Ok(filtered.OrderBy(s => s.SortOrder));
+        }
+
+        var data = await _context.Specialties.AsNoTracking()
+            .Where(s => s.IsActive)
+            .OrderBy(s => s.SortOrder)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+
+        var result = string.IsNullOrEmpty(category)
+            ? data
+            : data.Where(s => s.Category == category).ToList();
+        return Ok(result);
+    }
+
+    [HttpGet("subject-areas")]
+    public async Task<ActionResult> GetSubjectAreas()
+    {
+        const string cacheKey = "refdata:subject-areas";
+        var cached = await _cache.GetAsync<List<SubjectArea>>(cacheKey);
+        if (cached != null)
+            return Ok(cached.Where(s => s.IsActive).OrderBy(s => s.SortOrder));
+
+        var data = await _context.SubjectAreas.AsNoTracking()
+            .Where(s => s.IsActive)
+            .OrderBy(s => s.SortOrder)
             .ToListAsync();
         await _cache.SetAsync(cacheKey, data, _cacheExpiration);
         return Ok(data);
