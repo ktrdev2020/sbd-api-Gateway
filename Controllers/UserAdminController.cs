@@ -678,11 +678,26 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
 
         if (scope.Role != "super_admin")
         {
+            // Primary path: look up school via Personnel.UserId → SchoolAssignment
             var schoolIds = await db.PersonnelSchoolAssignments
                 .AsNoTracking()
                 .Where(sa => sa.IsPrimary && sa.Personnel.UserId == targetUserId)
                 .Select(sa => sa.SchoolId)
                 .ToListAsync(ct);
+
+            // Fallback: for imported users whose Personnel record is not yet linked
+            // to a User account, look up the scope from their UserRole directly.
+            if (schoolIds.Count == 0)
+            {
+                schoolIds = await db.UserRoles
+                    .AsNoTracking()
+                    .Where(ur => ur.UserId == targetUserId
+                              && ur.ScopeType == "School"
+                              && ur.ScopeId.HasValue)
+                    .Select(ur => ur.ScopeId!.Value)
+                    .ToListAsync(ct);
+            }
+
             if (!IsInScope(scope, schoolIds)) return (null, Forbid());
         }
         return (scope, null);
@@ -775,7 +790,10 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
     // ─────────────────────────────────────────────────────────────────────────
 
     [HttpPost("{id:int}/reset-password")]
-    public async Task<IActionResult> ResetPassword(int id, CancellationToken ct = default)
+    public async Task<IActionResult> ResetPassword(
+        int id,
+        [FromBody] ResetPasswordRequest? request,
+        CancellationToken ct = default)
     {
         var (_, deny) = await GuardMutationAsync(id, ct);
         if (deny is not null) return deny;
@@ -786,15 +804,22 @@ public class UserAdminController(SbdDbContext db, ICacheService cache) : Control
         if (provider is null)
             return BadRequest(new { Error = "ผู้ใช้นี้ไม่ได้ใช้ระบบรหัสผ่าน" });
 
-        var tempPassword = GenerateTempPassword();
-        provider.PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
+        // Use caller-supplied password if provided, otherwise auto-generate
+        var newPassword = !string.IsNullOrWhiteSpace(request?.NewPassword)
+            ? request.NewPassword
+            : GenerateTempPassword();
+
+        if (newPassword.Length < 6)
+            return BadRequest(new { Error = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร" });
+
+        provider.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
 
         var user = await db.Users.FindAsync([id], ct);
         if (user != null) user.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
         await TryRemoveCache(DetailKey(id));
-        return Ok(new { TempPassword = tempPassword, Message = "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว กรุณาแจ้งรหัสชั่วคราวแก่ผู้ใช้" });
+        return Ok(new { TempPassword = newPassword, Message = "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว กรุณาแจ้งรหัสชั่วคราวแก่ผู้ใช้" });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1121,3 +1146,6 @@ public record UpdateContactsRequest(
     string? LineId,
     string? FacebookUrl,
     string? TelegramUsername);
+
+/// <summary>Optional body for reset-password. Omit or leave NewPassword null/empty to auto-generate.</summary>
+public record ResetPasswordRequest(string? NewPassword = null);

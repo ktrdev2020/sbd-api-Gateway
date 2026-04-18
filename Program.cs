@@ -1072,6 +1072,59 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// ── Background: initialise passwords for imported users that have none ──────────
+// Users created via personnel import have Provider=local but PasswordHash=NULL.
+// Initial password = username (national-ID format). Runs on every startup but is
+// a no-op once all users have hashes.  BCrypt work-factor 10 keeps each hash to
+// ~50 ms; 2800 users ≈ 2–3 minutes total (background — does not block startup).
+_ = Task.Run(async () =>
+{
+    try
+    {
+        await using var scope2 = app.Services.CreateAsyncScope();
+        var db2 = scope2.ServiceProvider.GetRequiredService<SbdDbContext>();
+
+        var pending = await db2.UserLoginProviders
+            .Where(lp => lp.Provider == "local" && lp.PasswordHash == null)
+            .Include(lp => lp.User)
+            .ToListAsync();
+
+        if (pending.Count == 0)
+        {
+            Console.WriteLine("[InitPasswords] All users already have passwords.");
+            return;
+        }
+
+        Console.WriteLine($"[InitPasswords] Setting initial passwords for {pending.Count} users…");
+        var done = 0;
+
+        foreach (var lp in pending)
+        {
+            var username = lp.User?.Username ?? lp.ProviderKey;
+            if (string.IsNullOrEmpty(username)) continue;
+
+            lp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(username, workFactor: 10);
+            done++;
+
+            // Flush every 50 to avoid huge in-memory change-tracker
+            if (done % 50 == 0)
+            {
+                await db2.SaveChangesAsync();
+                Console.WriteLine($"[InitPasswords] {done}/{pending.Count} done…");
+            }
+        }
+
+        if (db2.ChangeTracker.HasChanges())
+            await db2.SaveChangesAsync();
+
+        Console.WriteLine($"[InitPasswords] Done — {done} passwords initialised.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[InitPasswords] ERROR: {ex.Message}");
+    }
+});
+
 // Configure the HTTP request pipeline
 var enableSwagger = app.Environment.IsDevelopment()
     || string.Equals(app.Configuration["ENABLE_SWAGGER"], "true", StringComparison.OrdinalIgnoreCase);
