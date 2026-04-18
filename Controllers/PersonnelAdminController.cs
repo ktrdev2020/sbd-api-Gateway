@@ -832,15 +832,23 @@ public class PersonnelAdminController(
                 .FirstOrDefaultAsync(s => s.Id == school.SchoolId, ct))?.AreaId ?? 0
             : 0;
 
-        p.AffiliationStatus = "trashed";
-        p.TrashedAt         = DateTimeOffset.UtcNow;
-        p.TrashedByUserId   = requestedBy;
-        p.UpdatedAt         = DateTimeOffset.UtcNow;
-        p.UpdatedBy         = requestedBy;
+        var now = DateTimeOffset.UtcNow;
 
-        if (p.User is not null) p.User.IsActive = false;
+        // Use ExecuteUpdateAsync for direct SQL — bypasses EF Core change-tracking
+        // quirks with HasDefaultValue("affiliated") on AffiliationStatus.
+        await db.Personnel
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.AffiliationStatus, "trashed")
+                .SetProperty(x => x.TrashedAt,         now)
+                .SetProperty(x => x.TrashedByUserId,   requestedBy)
+                .SetProperty(x => x.UpdatedAt,         now)
+                .SetProperty(x => x.UpdatedBy,         requestedBy), ct);
 
-        await db.SaveChangesAsync(ct);
+        if (p.User is not null)
+            await db.Users
+                .Where(x => x.Id == p.User.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsActive, false), ct);
 
         await bus.Publish(new PersonnelTrashedEvent
         {
