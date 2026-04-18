@@ -589,9 +589,9 @@ public class PersonnelAdminController(
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int.TryParse(userIdStr, out var requestedBy);
 
-        // Resolve string TitlePrefix → FK (nullable, non-blocking)
-        int? titlePrefixId = null;
-        if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
+        // Resolve TitlePrefix → FK: prefer direct ID, fall back to string lookup
+        int? titlePrefixId = req.TitlePrefixId;
+        if (titlePrefixId == null && !string.IsNullOrWhiteSpace(req.TitlePrefix))
         {
             titlePrefixId = await db.TitlePrefixes
                 .Where(t => t.NameTh == req.TitlePrefix.Trim())
@@ -703,7 +703,9 @@ public class PersonnelAdminController(
         int? newTitlePrefixId  = p.TitlePrefixId;
         int? newPositionTypeId = p.PositionTypeId;
 
-        if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
+        if (req.TitlePrefixId.HasValue)
+            newTitlePrefixId = req.TitlePrefixId;
+        else if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
             newTitlePrefixId = await db.TitlePrefixes
                 .Where(t => t.NameTh == req.TitlePrefix.Trim())
                 .Select(t => (int?)t.Id)
@@ -1331,7 +1333,8 @@ public record PersonnelSearchExistingRequest(string? IdCard, string? PersonnelCo
 public class PersonnelAdminCreateRequest
 {
     public string?  PersonnelCode    { get; set; }
-    public string?  TitlePrefix      { get; set; }  // plain text e.g. "นาย"
+    public int?     TitlePrefixId    { get; set; }  // direct FK — preferred
+    public string?  TitlePrefix      { get; set; }  // plain text fallback e.g. "นาย"
     public string   FirstName        { get; set; } = "";
     public string   LastName         { get; set; } = "";
     public string?  IdCard           { get; set; }
@@ -1357,7 +1360,8 @@ public class PersonnelAdminCreateRequest
 
 public class PersonnelAdminUpdateRequest
 {
-    public string?  TitlePrefix      { get; set; }
+    public int?     TitlePrefixId    { get; set; }  // direct FK — preferred
+    public string?  TitlePrefix      { get; set; }  // plain text fallback
     public string?  FirstName        { get; set; }
     public string?  LastName         { get; set; }
     public string?  BirthDate        { get; set; }

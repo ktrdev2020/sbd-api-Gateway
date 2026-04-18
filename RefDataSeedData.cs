@@ -12,8 +12,42 @@ public static class RefDataSeedData
 {
     public static async Task SeedAsync(SbdDbContext db)
     {
+        await SeedEducationLevelsAsync(db);
         await SeedSubjectAreasAsync(db);
         await SeedSpecialtiesAsync(db);
+    }
+
+    // ── ระดับวุฒิการศึกษา ────────────────────────────────────────────────────────
+    // SchoolSeedData.SeedAsync() has an early-exit guard (returns when Schools exist),
+    // so EducationLevels were never seeded for existing databases. Moved here.
+    private static async Task SeedEducationLevelsAsync(SbdDbContext db)
+    {
+        var seed = new (string Code, string NameTh, string NameEn, int Level)[]
+        {
+            ("p6",    "ประถมศึกษา",                        "Primary",                     1),
+            ("m3",    "มัธยมศึกษาตอนต้น",                  "Lower Secondary",             2),
+            ("m6",    "มัธยมศึกษาตอนปลาย",                 "Upper Secondary",             3),
+            ("pvc",   "ประกาศนียบัตรวิชาชีพ (ปวช.)",       "Vocational Certificate",      4),
+            ("pvc2",  "ประกาศนียบัตรวิชาชีพชั้นสูง (ปวส.)", "High Vocational Certificate", 5),
+            ("ba",    "ปริญญาตรี",                          "Bachelor's Degree",           6),
+            ("ma",    "ปริญญาโท",                           "Master's Degree",             7),
+            ("phd",   "ปริญญาเอก",                          "Doctoral Degree",             8),
+            ("other", "อื่นๆ",                              "Other",                       0),
+        };
+
+        var existing = await db.EducationLevels.Select(e => e.Code).ToHashSetAsync();
+        foreach (var (code, nameTh, nameEn, level) in seed)
+        {
+            if (!existing.Contains(code))
+            {
+                db.EducationLevels.Add(new EducationLevel
+                {
+                    Code = code, NameTh = nameTh, NameEn = nameEn,
+                    Level = level, IsActive = true,
+                });
+            }
+        }
+        await db.SaveChangesAsync();
     }
 
     // ── กลุ่มสาระการเรียนรู้ 8 กลุ่ม + กิจกรรมพัฒนาผู้เรียน ─────────────────────
