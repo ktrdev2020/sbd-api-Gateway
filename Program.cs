@@ -1145,8 +1145,29 @@ using (var scope = app.Services.CreateScope())
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SubjectAreas_Code"" ON ""SubjectAreas"" (""Code"");
     ");
 
-    // Seed reference lookup tables: Specialties + SubjectAreas
+    // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels
     await Gateway.RefDataSeedData.SeedAsync(db);
+
+    // Invalidate refdata Redis cache keys so stale empty-array responses from
+    // before this seed run are not served (safe to call every startup — TTL resets).
+    try
+    {
+        var redis = app.Services.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>();
+        var redisDb = redis.GetDatabase();
+        await redisDb.KeyDeleteAsync(new StackExchange.Redis.RedisKey[]
+        {
+            "refdata:education-levels",
+            "refdata:specialties",
+            "refdata:subject-areas",
+            "refdata:title-prefixes",
+            "refdata:position-types",
+        });
+        Console.WriteLine("[Seed] RefData Redis caches invalidated.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Seed] RefData Redis cache invalidation skipped: {ex.Message}");
+    }
 
     // ── Phase A.2.5 — Seed AreaPermissionPolicy default rows for self-edit ──
     // For every Area, ensure the 4 self-edit policy codes exist (default = false).

@@ -157,13 +157,18 @@ public class RefDataController : ControllerBase
     public async Task<ActionResult> GetEducationLevels()
     {
         const string cacheKey = "refdata:education-levels";
-        var cached = await _cache.GetAsync<List<EducationLevel>>(cacheKey);
-        if (cached != null)
-            return Ok(cached.Where(e => e.IsActive).OrderBy(e => e.Level));
+        var cached = await _cache.GetAsync<List<EducationLevelDto>>(cacheKey);
+        if (cached is { Count: > 0 })
+            return Ok(cached);
 
         var data = await _context.EducationLevels.AsNoTracking()
             .Where(e => e.IsActive)
             .OrderBy(e => e.Level)
+            .Select(e => new EducationLevelDto
+            {
+                Id = e.Id, Code = e.Code, NameTh = e.NameTh, NameEn = e.NameEn,
+                Level = e.Level, IsActive = e.IsActive,
+            })
             .ToListAsync();
         await _cache.SetAsync(cacheKey, data, _cacheExpiration);
         return Ok(data);
@@ -209,4 +214,19 @@ public class RefDataController : ControllerBase
         await _cache.SetAsync(cacheKey, data, _cacheExpiration);
         return Ok(data);
     }
+}
+
+// ─── DTOs ─────────────────────────────────────────────────────────────────────
+
+/// <summary>Projection for EducationLevel — excludes navigation properties.</summary>
+public record EducationLevelDto(
+    int     Id,
+    string  Code,
+    string  NameTh,
+    string? NameEn,
+    int     Level,
+    bool    IsActive)
+{
+    // Parameterless ctor required for JSON deserialization from Redis
+    public EducationLevelDto() : this(0, "", "", null, 0, true) { }
 }
