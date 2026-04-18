@@ -236,11 +236,12 @@ public class PersonnelAdminController(
                 TitlePrefix = p.TitlePrefix != null ? p.TitlePrefix.NameTh : null,
                 p.FirstName,
                 p.LastName,
-                PositionType = p.PositionType != null ? p.PositionType.NameTh : null,
-                AcademicStanding = p.AcademicStandingType != null ? p.AcademicStandingType.NameTh : null,
+                PositionType  = p.PositionType != null ? p.PositionType.NameTh : null,
+                AcademicRank  = p.AcademicStandingType != null ? p.AcademicStandingType.NameTh : null,
+                SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.SalaryLevel).FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
-                    .Select(sa => new { sa.SchoolId, sa.School.NameTh, sa.SpecialRoleType })
+                    .Select(sa => new { sa.SchoolId, NameTh = sa.School.NameTh, sa.SpecialRoleType })
                     .FirstOrDefault(),
                 p.UserId,
                 p.UpdatedAt,
@@ -269,34 +270,37 @@ public class PersonnelAdminController(
             .Where(p => p.AffiliationStatus != "trashed");
         q = ApplyScopeFilter(q, scope);
 
-        var byType   = await q.GroupBy(p => p.PersonnelType)
-            .Select(g => new { Type = g.Key, Count = g.Count() })
+        // byType as Record<string,number>
+        var byTypeList = await q.GroupBy(p => p.PersonnelType)
+            .Select(g => new { Key = g.Key, Count = g.Count() })
             .ToListAsync(ct);
+        var byType = byTypeList.ToDictionary(x => x.Key, x => x.Count);
 
-        var byStatus = await q.GroupBy(p => p.AffiliationStatus)
-            .Select(g => new { Status = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var total      = byType.Sum(x => x.Count);
-        var affiliated = byStatus.FirstOrDefault(x => x.Status == "affiliated")?.Count ?? 0;
-        var unaffiliated = byStatus.FirstOrDefault(x => x.Status == "unaffiliated")?.Count ?? 0;
+        var total        = byTypeList.Sum(x => x.Count);
+        var affiliated   = await q.CountAsync(p => p.AffiliationStatus == "affiliated", ct);
+        var unaffiliated = await q.CountAsync(p => p.AffiliationStatus == "unaffiliated", ct);
+        var hasAccount   = await q.CountAsync(p => p.UserId != null, ct);
 
         // Per-school breakdown (for area/super views)
-        List<object>? bySchool = null;
+        object? bySchool = null;
         if (scope.Role != "school_admin")
         {
-            bySchool = (await db.Personnel.AsNoTracking()
+            bySchool = await db.Personnel.AsNoTracking()
                 .Where(p => p.AffiliationStatus == "affiliated")
                 .SelectMany(p => p.SchoolAssignments.Where(sa => sa.IsPrimary))
                 .GroupBy(sa => new { sa.SchoolId, sa.School.NameTh })
-                .Select(g => new { g.Key.SchoolId, g.Key.NameTh, Count = g.Count() })
+                .Select(g => new
+                {
+                    g.Key.SchoolId,
+                    SchoolName  = g.Key.NameTh,
+                    Count       = g.Count(),
+                    WithAccount = g.Count(sa => sa.Personnel.UserId != null),
+                })
                 .OrderByDescending(x => x.Count)
-                .ToListAsync(ct))
-                .Cast<object>()
-                .ToList();
+                .ToListAsync(ct);
         }
 
-        var result = new { total, affiliated, unaffiliated, byType, bySchool };
+        var result = new { total, affiliated, unaffiliated, hasAccount, byType, bySchool };
         await TrySetCache(cacheKey, result, StatsTtl);
         return Ok(result);
     }
@@ -430,6 +434,8 @@ public class PersonnelAdminController(
             if (!schoolIds.Any(s => scope.AllowedSchoolIds.Contains(s))) return Forbid();
         }
 
+        var primarySa = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
+
         var result = new
         {
             p.Id,
@@ -445,31 +451,32 @@ public class PersonnelAdminController(
             p.Photo,
             p.SubjectArea,
             p.Specialty,
-            TitlePrefix      = p.TitlePrefix,
-            PositionType     = p.PositionType,
-            AcademicStanding = p.AcademicStandingType,
-            SchoolAssignments = p.SchoolAssignments.Select(sa => new
+            p.TrashedAt,
+            TitlePrefix  = p.TitlePrefix?.NameTh,
+            PositionType = p.PositionType?.NameTh,
+            AcademicRank = p.AcademicStandingType?.NameTh,
+            SalaryLevel  = primarySa?.SalaryLevel,
+            PrimarySchool = primarySa is null ? null : new
+            {
+                primarySa.SchoolId,
+                NameTh          = primarySa.School.NameTh,
+                primarySa.SpecialRoleType,
+            },
+            Schools = p.SchoolAssignments.Select(sa => new
             {
                 sa.Id,
                 sa.SchoolId,
-                sa.School.NameTh,
+                SchoolName = sa.School.NameTh,
                 sa.Position,
                 sa.AcademicRank,
                 sa.SalaryLevel,
                 sa.IsPrimary,
-                sa.StartDate,
+                AssignedAt  = sa.StartDate,
                 sa.EndDate,
                 sa.SpecialRoleType,
             }),
-            Educations    = p.Educations,
-            Certifications = p.Certifications,
-            User = p.User is null ? null : new
-            {
-                p.User.Id,
-                p.User.Username,
-                p.User.DisplayName,
-                p.User.IsActive,
-            },
+            p.UserId,
+            Username = p.User?.Username,
             p.UpdatedAt,
         };
 
@@ -556,22 +563,50 @@ public class PersonnelAdminController(
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int.TryParse(userIdStr, out var requestedBy);
 
+        // Resolve string TitlePrefix → FK (nullable, non-blocking)
+        int? titlePrefixId = null;
+        if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
+        {
+            titlePrefixId = await db.TitlePrefixes
+                .Where(t => t.NameTh == req.TitlePrefix.Trim())
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        // Resolve string PositionType → FK (nullable, non-blocking)
+        int? positionTypeId = null;
+        if (!string.IsNullOrWhiteSpace(req.PositionType))
+        {
+            positionTypeId = await db.PositionTypes
+                .Where(t => t.NameTh == req.PositionType.Trim())
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        // Auto-generate PersonnelCode if not provided
+        var personnelCode = req.PersonnelCode;
+        if (string.IsNullOrWhiteSpace(personnelCode))
+        {
+            var year = DateTime.Today.Year;
+            var seq  = await db.Personnel.CountAsync(ct) + 1;
+            personnelCode = $"PC{year}{seq:D5}";
+        }
+
         var personnel = new Personnel
         {
-            PersonnelCode = req.PersonnelCode,
-            TitlePrefixId = req.TitlePrefixId,
+            PersonnelCode = personnelCode,
+            TitlePrefixId = titlePrefixId,
             FirstName     = req.FirstName,
             LastName      = req.LastName,
             IdCard        = req.IdCard,
             PersonnelType = req.PersonnelType,
-            Gender        = req.Gender,
-            BirthDate     = req.BirthDate,
+            Gender        = req.Gender?.Length > 0 ? req.Gender[0] : 'U',
+            BirthDate     = DateOnly.TryParse(req.BirthDate, out var bd) ? bd : null,
             Phone         = req.Phone,
             Email         = req.Email,
             SubjectArea   = req.SubjectArea,
             Specialty     = req.Specialty,
-            PositionTypeId        = req.PositionTypeId,
-            AcademicStandingTypeId = req.AcademicStandingTypeId,
+            PositionTypeId = positionTypeId,
             AffiliationStatus = "affiliated",
             UpdatedAt = DateTimeOffset.UtcNow,
             UpdatedBy = requestedBy,
@@ -586,11 +621,11 @@ public class PersonnelAdminController(
             PersonnelId     = personnel.Id,
             SchoolId        = targetSchoolId,
             IsPrimary       = true,
-            Position        = req.Position,
+            Position        = req.PositionType,
             AcademicRank    = req.AcademicRank,
             SalaryLevel     = req.SalaryLevel,
             SpecialRoleType = req.SpecialRoleType ?? "none",
-            StartDate       = req.StartDate ?? DateOnly.FromDateTime(DateTime.Today),
+            StartDate       = DateOnly.TryParse(req.StartDate, out var sd) ? sd : DateOnly.FromDateTime(DateTime.Today),
         });
         await db.SaveChangesAsync(ct);
 
@@ -634,16 +669,30 @@ public class PersonnelAdminController(
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int.TryParse(userIdStr, out var requestedBy);
 
-        if (req.TitlePrefixId.HasValue) p.TitlePrefixId = req.TitlePrefixId;
+        if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
+        {
+            var tid = await db.TitlePrefixes
+                .Where(t => t.NameTh == req.TitlePrefix.Trim())
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+            p.TitlePrefixId = tid;
+        }
+        if (!string.IsNullOrWhiteSpace(req.PositionType))
+        {
+            var pid = await db.PositionTypes
+                .Where(t => t.NameTh == req.PositionType.Trim())
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+            p.PositionTypeId = pid;
+        }
         if (req.FirstName is not null)  p.FirstName  = req.FirstName;
         if (req.LastName is not null)   p.LastName   = req.LastName;
         if (req.Phone is not null)      p.Phone      = req.Phone;
         if (req.Email is not null)      p.Email      = req.Email;
         if (req.SubjectArea is not null) p.SubjectArea = req.SubjectArea;
         if (req.Specialty is not null)  p.Specialty  = req.Specialty;
-        if (req.PositionTypeId.HasValue) p.PositionTypeId = req.PositionTypeId;
-        if (req.AcademicStandingTypeId.HasValue) p.AcademicStandingTypeId = req.AcademicStandingTypeId;
-        if (req.BirthDate.HasValue)     p.BirthDate  = req.BirthDate;
+        if (req.BirthDate is not null && DateOnly.TryParse(req.BirthDate, out var updBd))
+            p.BirthDate = updBd;
         p.UpdatedAt = DateTimeOffset.UtcNow;
         p.UpdatedBy = requestedBy;
 
@@ -1122,38 +1171,38 @@ public class PersonnelAdminController(
 public record PersonnelSearchExistingRequest(string? IdCard, string? PersonnelCode);
 
 public record PersonnelAdminCreateRequest(
-    string     PersonnelCode,
-    int?       TitlePrefixId,
+    string?    PersonnelCode,
+    string?    TitlePrefix,       // plain text, e.g. "นาย" / "นาง"
     string     FirstName,
     string     LastName,
     string?    IdCard,
     string     PersonnelType,
-    char       Gender,
-    DateOnly?  BirthDate,
+    string?    Gender,
+    string?    BirthDate,         // ISO date string e.g. "1990-01-15"
     string?    Phone,
     string?    Email,
     string?    SubjectArea,
     string?    Specialty,
-    int?       PositionTypeId,
-    int?       AcademicStandingTypeId,
-    int?       SchoolId,          // required for area_admin / super_admin
-    string?    Position,
+    string?    PositionType,      // plain text, e.g. "ครูผู้ช่วย"
     string?    AcademicRank,
     string?    SalaryLevel,
+    int?       SchoolId,
     string?    SpecialRoleType,   // none | acting_director | deputy_director
-    DateOnly?  StartDate);
+    string?    StartDate);        // ISO date string
 
 public record PersonnelAdminUpdateRequest(
-    int?       TitlePrefixId,
+    string?    TitlePrefix,
     string?    FirstName,
     string?    LastName,
     string?    Phone,
     string?    Email,
     string?    SubjectArea,
     string?    Specialty,
-    int?       PositionTypeId,
-    int?       AcademicStandingTypeId,
-    DateOnly?  BirthDate);
+    string?    PositionType,
+    string?    AcademicRank,
+    string?    SalaryLevel,
+    string?    BirthDate,
+    string?    SpecialRoleType);
 
 public record AssignToSchoolRequest(
     int       SchoolId,
