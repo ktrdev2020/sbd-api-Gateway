@@ -47,17 +47,20 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     }
 
     // ─── Caller scope resolution ──────────────────────────────────────────────
-    // Returns null when the caller's role can't be resolved or the school_admin's
-    // area has not granted them user-management permission.
+    // Returns null when the caller's role can't be resolved.
+    // For school_admin: when readOnly=false the 3-tier "user.manage_school_users"
+    // policy is enforced (null = blocked). When readOnly=true the policy is skipped
+    // so list/detail endpoints are always accessible regardless of area policy.
 
     private record CallerScope(
         string Role,
         int? AreaId,
         int? SchoolId,
         IReadOnlyList<int> AllowedSchoolIds,
-        string CacheTag);
+        string CacheTag,
+        bool CanMutate = true);
 
-    private async Task<CallerScope?> GetCallerScopeAsync(CancellationToken ct = default)
+    private async Task<CallerScope?> GetCallerScopeAsync(bool readOnly = false, CancellationToken ct = default)
     {
         // super_admin — unrestricted
         if (User.IsInRole("super_admin") || User.IsInRole("SuperAdmin"))
@@ -108,7 +111,12 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
 
             const string code = "user.manage_school_users";
 
-            // Tier 1: school-specific override
+            // 3-tier "user.manage_school_users" policy check:
+            //   1. School-specific policy → use AllowSchoolAdmin
+            //   2. Area-wide policy (SchoolId IS NULL) → use AllowSchoolAdmin
+            //   3. No policy → allowed by default (opt-out model)
+            var canMutate = true;
+
             var schoolPolicy = await db.AreaPermissionPolicies
                 .FirstOrDefaultAsync(p =>
                     p.AreaId == school.AreaId
@@ -117,22 +125,23 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
 
             if (schoolPolicy is not null)
             {
-                if (!schoolPolicy.AllowSchoolAdmin) return null;
+                canMutate = schoolPolicy.AllowSchoolAdmin;
             }
             else
             {
-                // Tier 2: area-wide policy (SchoolId IS NULL)
                 var areaPolicy = await db.AreaPermissionPolicies
                     .FirstOrDefaultAsync(p =>
                         p.AreaId == school.AreaId
                         && p.SchoolId == null
                         && p.PermissionCode == code, ct);
 
-                if (areaPolicy is not null && !areaPolicy.AllowSchoolAdmin) return null;
-                // Tier 3: no policy → allowed
+                if (areaPolicy is not null) canMutate = areaPolicy.AllowSchoolAdmin;
             }
 
-            return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}");
+            // Mutation endpoints block when policy denies; read-only endpoints always succeed
+            if (!canMutate && !readOnly) return null;
+
+            return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}", canMutate);
         }
 
         return null;
@@ -202,7 +211,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         [FromQuery] int pageSize = 30,
         CancellationToken ct = default)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
         // school_admin can only browse their own school — ignore schoolId param
@@ -384,7 +393,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     [HttpGet("stats")]
     public async Task<IActionResult> GetStats(CancellationToken ct = default)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
         var statsKey = ScopedStatsKey(scope.CacheTag);
@@ -494,7 +503,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetUser(int id, CancellationToken ct = default)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
         var cachedDetail = await TryGetCache<object>(DetailKey(id));
@@ -675,7 +684,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     private async Task<(CallerScope? scope, IActionResult? deny)> GuardMutationAsync(
         int targetUserId, CancellationToken ct)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return (null, Forbid());
 
         if (scope.Role != "super_admin")
@@ -1132,7 +1141,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     [Authorize(Roles = "area_admin,super_admin,AreaAdmin,SuperAdmin")]
     public async Task<IActionResult> VerifyAreaLogins(CancellationToken ct = default)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return Forbid();
         if (scope.Role != "area_admin" && scope.Role != "super_admin") return Forbid();
         if (scope.AreaId is null) return BadRequest(new { Error = "ระบุ AreaId ไม่ได้" });
@@ -1159,15 +1168,14 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     [HttpGet("manage-permission")]
     public async Task<IActionResult> GetManagePermission(CancellationToken ct = default)
     {
-        var scope = await GetCallerScopeAsync(ct);
+        var scope = await GetCallerScopeAsync(readOnly: true, ct);
 
         // super_admin and area_admin can always manage
         if (scope?.Role is "super_admin" or "area_admin")
             return Ok(new { canManage = true, schoolId = scope.SchoolId });
 
-        // school_admin: GetCallerScopeAsync already runs the 3-tier check —
-        // null means permission denied, non-null means allowed.
-        return Ok(new { canManage = scope is not null, schoolId = scope?.SchoolId });
+        // school_admin: CanMutate reflects the 3-tier policy result
+        return Ok(new { canManage = scope?.CanMutate ?? false, schoolId = scope?.SchoolId });
     }
 
     /// <summary>
