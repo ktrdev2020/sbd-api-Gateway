@@ -1084,9 +1084,11 @@ _ = Task.Run(async () =>
         await using var scope2 = app.Services.CreateAsyncScope();
         var db2 = scope2.ServiceProvider.GetRequiredService<SbdDbContext>();
 
+        // Project to anonymous type — no EF change tracking needed
         var pending = await db2.UserLoginProviders
+            .AsNoTracking()
             .Where(lp => lp.Provider == "local" && lp.PasswordHash == null)
-            .Include(lp => lp.User)
+            .Select(lp => new { lp.Id, Username = lp.User != null ? lp.User.Username : lp.ProviderKey })
             .ToListAsync();
 
         if (pending.Count == 0)
@@ -1100,22 +1102,21 @@ _ = Task.Run(async () =>
 
         foreach (var lp in pending)
         {
-            var username = lp.User?.Username ?? lp.ProviderKey;
+            var username = lp.Username;
             if (string.IsNullOrEmpty(username)) continue;
 
-            lp.PasswordHash = BCrypt.Net.BCrypt.HashPassword(username, workFactor: 10);
+            var hash = BCrypt.Net.BCrypt.HashPassword(username, workFactor: 10);
+
+            // Use raw SQL to bypass EF change-tracker (avoids silent no-op on tracked entities)
+            await db2.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""UserLoginProviders"" SET ""PasswordHash"" = {0}
+                  WHERE ""Id"" = {1} AND ""PasswordHash"" IS NULL",
+                hash, lp.Id);
+
             done++;
-
-            // Flush every 50 to avoid huge in-memory change-tracker
             if (done % 50 == 0)
-            {
-                await db2.SaveChangesAsync();
                 Console.WriteLine($"[InitPasswords] {done}/{pending.Count} done…");
-            }
         }
-
-        if (db2.ChangeTracker.HasChanges())
-            await db2.SaveChangesAsync();
 
         Console.WriteLine($"[InitPasswords] Done — {done} passwords initialised.");
     }
