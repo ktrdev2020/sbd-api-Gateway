@@ -1170,39 +1170,43 @@ public class PersonnelAdminController(
 
 public record PersonnelSearchExistingRequest(string? IdCard, string? PersonnelCode);
 
-public record PersonnelAdminCreateRequest(
-    string?    PersonnelCode,
-    string?    TitlePrefix,       // plain text, e.g. "นาย" / "นาง"
-    string     FirstName,
-    string     LastName,
-    string?    IdCard,
-    string     PersonnelType,
-    string?    Gender,
-    string?    BirthDate,         // ISO date string e.g. "1990-01-15"
-    string?    Phone,
-    string?    Email,
-    string?    SubjectArea,
-    string?    Specialty,
-    string?    PositionType,      // plain text, e.g. "ครูผู้ช่วย"
-    string?    AcademicRank,
-    string?    SalaryLevel,
-    int?       SchoolId,
-    string?    SpecialRoleType,   // none | acting_director | deputy_director
-    string?    StartDate);        // ISO date string
+public class PersonnelAdminCreateRequest
+{
+    public string?  PersonnelCode   { get; set; }
+    public string?  TitlePrefix     { get; set; }  // plain text, e.g. "นาย" / "นาง"
+    public string   FirstName       { get; set; } = "";
+    public string   LastName        { get; set; } = "";
+    public string?  IdCard          { get; set; }
+    public string   PersonnelType   { get; set; } = "";
+    public string?  Gender          { get; set; }
+    public string?  BirthDate       { get; set; }  // ISO date string e.g. "1990-01-15"
+    public string?  Phone           { get; set; }
+    public string?  Email           { get; set; }
+    public string?  SubjectArea     { get; set; }
+    public string?  Specialty       { get; set; }
+    public string?  PositionType    { get; set; }  // plain text, e.g. "ครูผู้ช่วย"
+    public string?  AcademicRank    { get; set; }
+    public string?  SalaryLevel     { get; set; }
+    public int?     SchoolId        { get; set; }
+    public string?  SpecialRoleType { get; set; }  // none | acting_director | deputy_director
+    public string?  StartDate       { get; set; }  // ISO date string
+}
 
-public record PersonnelAdminUpdateRequest(
-    string?    TitlePrefix,
-    string?    FirstName,
-    string?    LastName,
-    string?    Phone,
-    string?    Email,
-    string?    SubjectArea,
-    string?    Specialty,
-    string?    PositionType,
-    string?    AcademicRank,
-    string?    SalaryLevel,
-    string?    BirthDate,
-    string?    SpecialRoleType);
+public class PersonnelAdminUpdateRequest
+{
+    public string?  TitlePrefix     { get; set; }
+    public string?  FirstName       { get; set; }
+    public string?  LastName        { get; set; }
+    public string?  Phone           { get; set; }
+    public string?  Email           { get; set; }
+    public string?  SubjectArea     { get; set; }
+    public string?  Specialty       { get; set; }
+    public string?  PositionType    { get; set; }
+    public string?  AcademicRank    { get; set; }
+    public string?  SalaryLevel     { get; set; }
+    public string?  BirthDate       { get; set; }
+    public string?  SpecialRoleType { get; set; }
+}
 
 public record AssignToSchoolRequest(
     int       SchoolId,
