@@ -41,11 +41,11 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
     else \
       echo "WARNING: No GITHUB_TOKEN secret provided, NuGet restore may fail for private packages"; \
     fi \
-    && dotnet restore Gateway.csproj --force --no-cache
+    && dotnet restore Gateway.csproj --force --no-cache -p:USE_NUGET=true
 
 # Copy all source and publish
 COPY . .
-RUN dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --no-restore
+RUN dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:USE_NUGET=true --no-restore
 
 FROM base AS final
 WORKDIR /app
