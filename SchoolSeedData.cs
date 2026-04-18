@@ -492,6 +492,26 @@ public static class SchoolSeedData
             Console.WriteLine($"[Seed] {standings.Length} academic standing types created.");
         }
 
+        // ── Seed EducationLevels (ระดับวุฒิการศึกษา) ──
+        if (!await db.EducationLevels.AnyAsync())
+        {
+            var levels = new[]
+            {
+                new EducationLevel { Code = "p6",    NameTh = "ประถมศึกษา",                       NameEn = "Primary",                     Level = 1  },
+                new EducationLevel { Code = "m3",    NameTh = "มัธยมศึกษาตอนต้น",                  NameEn = "Lower Secondary",             Level = 2  },
+                new EducationLevel { Code = "m6",    NameTh = "มัธยมศึกษาตอนปลาย",                 NameEn = "Upper Secondary",             Level = 3  },
+                new EducationLevel { Code = "pvc",   NameTh = "ประกาศนียบัตรวิชาชีพ (ปวช.)",       NameEn = "Vocational Certificate",      Level = 4  },
+                new EducationLevel { Code = "pvc2",  NameTh = "ประกาศนียบัตรวิชาชีพชั้นสูง (ปวส.)", NameEn = "High Vocational Certificate", Level = 5  },
+                new EducationLevel { Code = "ba",    NameTh = "ปริญญาตรี",                         NameEn = "Bachelor's Degree",           Level = 6  },
+                new EducationLevel { Code = "ma",    NameTh = "ปริญญาโท",                          NameEn = "Master's Degree",             Level = 7  },
+                new EducationLevel { Code = "phd",   NameTh = "ปริญญาเอก",                         NameEn = "Doctoral Degree",             Level = 8  },
+                new EducationLevel { Code = "other", NameTh = "อื่นๆ",                             NameEn = "Other",                       Level = 0  },
+            };
+            db.EducationLevels.AddRange(levels);
+            await db.SaveChangesAsync();
+            Console.WriteLine($"[Seed] {levels.Length} education levels created.");
+        }
+
         // ── Seed default work groups for area ──
         if (!await db.WorkGroups.AnyAsync(w => w.ScopeType == "Area" && w.ScopeId == area.Id))
         {

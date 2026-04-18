@@ -121,7 +121,7 @@ public class AreaPersonnelController : ControllerBase
         var p = await _context.Personnel
             .Include(x => x.TitlePrefix)
             .Include(x => x.SchoolAssignments).ThenInclude(a => a.School)
-            .Include(x => x.Educations)
+            .Include(x => x.Educations).ThenInclude(e => e.EducationLevel)
             .Include(x => x.Certifications)
             .FirstOrDefaultAsync(x => x.Id == id);
 
@@ -143,7 +143,12 @@ public class AreaPersonnelController : ControllerBase
             }),
             Educations = p.Educations.Select(e => new
             {
-                e.Id, e.Degree, e.Major, e.Institution, e.GraduatedYear
+                e.Id,
+                EducationLevel  = e.EducationLevel != null ? e.EducationLevel.NameTh : null,
+                e.QualificationName,
+                e.Major,
+                e.Institution,
+                e.GraduatedYear,
             }),
             Certifications = p.Certifications.Select(c => new
             {

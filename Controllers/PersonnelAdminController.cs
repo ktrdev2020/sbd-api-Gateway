@@ -420,7 +420,7 @@ public class PersonnelAdminController(
             .Include(x => x.PositionType)
             .Include(x => x.AcademicStandingType)
             .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.School)
-            .Include(x => x.Educations)
+            .Include(x => x.Educations).ThenInclude(e => e.EducationLevel)
             .Include(x => x.Certifications)
             .Include(x => x.User)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -445,19 +445,25 @@ public class PersonnelAdminController(
             p.AffiliationStatus,
             p.Gender,
             p.BirthDate,
+            p.AppointmentDate,
             p.Phone,
             p.Email,
             p.LineId,
+            p.Facebook,
+            p.Telegram,
             p.Photo,
             p.SubjectArea,
             p.Specialty,
             p.TrashedAt,
-            TitlePrefix  = p.TitlePrefix?.NameTh,
+            TitlePrefix      = p.TitlePrefix?.NameTh,
+            TitlePrefixId    = p.TitlePrefixId,
             p.FirstName,
             p.LastName,
-            PositionType = p.PositionType?.NameTh,
-            AcademicRank = p.AcademicStandingType?.NameTh,
-            SalaryLevel  = primarySa?.SalaryLevel,
+            PositionType     = p.PositionType?.NameTh,
+            PositionTypeId   = p.PositionTypeId,
+            AcademicRank     = p.AcademicStandingType?.NameTh,
+            AcademicRankId   = p.AcademicStandingTypeId,
+            SalaryLevel      = primarySa?.SalaryLevel,
             PrimarySchool = primarySa is null ? null : new
             {
                 primarySa.SchoolId,
@@ -476,6 +482,24 @@ public class PersonnelAdminController(
                 AssignedAt  = sa.StartDate,
                 sa.EndDate,
                 sa.SpecialRoleType,
+            }),
+            Educations = p.Educations.OrderByDescending(e => e.GraduatedYear).Select(e => new
+            {
+                e.Id,
+                e.EducationLevelId,
+                EducationLevel  = e.EducationLevel?.NameTh,
+                e.QualificationName,
+                e.Major,
+                e.Institution,
+                e.GraduatedYear,
+            }),
+            Certifications = p.Certifications.OrderByDescending(c => c.IssuedDate).Select(c => new
+            {
+                c.Id,
+                c.Name,
+                c.IssuedBy,
+                c.IssuedDate,
+                c.ExpiryDate,
             }),
             p.UserId,
             Username = p.User?.Username,
@@ -596,22 +620,26 @@ public class PersonnelAdminController(
 
         var personnel = new Personnel
         {
-            PersonnelCode = personnelCode,
-            TitlePrefixId = titlePrefixId,
-            FirstName     = req.FirstName,
-            LastName      = req.LastName,
-            IdCard        = req.IdCard,
-            PersonnelType = req.PersonnelType,
-            Gender        = req.Gender?.Length > 0 ? req.Gender[0] : 'U',
-            BirthDate     = DateOnly.TryParse(req.BirthDate, out var bd) ? bd : null,
-            Phone         = req.Phone,
-            Email         = req.Email,
-            SubjectArea   = req.SubjectArea,
-            Specialty     = req.Specialty,
-            PositionTypeId = positionTypeId,
+            PersonnelCode     = personnelCode,
+            TitlePrefixId     = titlePrefixId,
+            FirstName         = req.FirstName,
+            LastName          = req.LastName,
+            IdCard            = req.IdCard,
+            PersonnelType     = req.PersonnelType,
+            Gender            = req.Gender?.Length > 0 ? req.Gender[0] : 'U',
+            BirthDate         = DateOnly.TryParse(req.BirthDate, out var bd) ? bd : null,
+            AppointmentDate   = DateOnly.TryParse(req.AppointmentDate, out var apd) ? apd : null,
+            Phone             = req.Phone,
+            Email             = req.Email,
+            LineId            = req.LineId,
+            Facebook          = req.Facebook,
+            Telegram          = req.Telegram,
+            SubjectArea       = req.SubjectArea,
+            Specialty         = req.Specialty,
+            PositionTypeId    = positionTypeId,
             AffiliationStatus = "affiliated",
-            UpdatedAt = DateTimeOffset.UtcNow,
-            UpdatedBy = requestedBy,
+            UpdatedAt         = DateTimeOffset.UtcNow,
+            UpdatedBy         = requestedBy,
         };
 
         db.Personnel.Add(personnel);
@@ -693,22 +721,30 @@ public class PersonnelAdminController(
 
         var now = DateTimeOffset.UtcNow;
 
+        DateOnly? newAppointmentDate = p.AppointmentDate;
+        if (req.AppointmentDate is not null && DateOnly.TryParse(req.AppointmentDate, out var updAp))
+            newAppointmentDate = updAp;
+
         // Use ExecuteUpdateAsync (direct SQL) to avoid EF Core change-tracking
         // issues with HasDefaultValue / HasDefaultValueSql on certain columns.
         await db.Personnel
             .Where(x => x.Id == id)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(x => x.TitlePrefixId,  newTitlePrefixId)
-                .SetProperty(x => x.PositionTypeId, newPositionTypeId)
-                .SetProperty(x => x.FirstName,   req.FirstName   ?? p.FirstName)
-                .SetProperty(x => x.LastName,    req.LastName    ?? p.LastName)
-                .SetProperty(x => x.Phone,       req.Phone       ?? p.Phone)
-                .SetProperty(x => x.Email,       req.Email       ?? p.Email)
-                .SetProperty(x => x.SubjectArea, req.SubjectArea ?? p.SubjectArea)
-                .SetProperty(x => x.Specialty,   req.Specialty   ?? p.Specialty)
-                .SetProperty(x => x.BirthDate,   newBirthDate)
-                .SetProperty(x => x.UpdatedAt,   now)
-                .SetProperty(x => x.UpdatedBy,   requestedBy),
+                .SetProperty(x => x.TitlePrefixId,    newTitlePrefixId)
+                .SetProperty(x => x.PositionTypeId,   newPositionTypeId)
+                .SetProperty(x => x.FirstName,        req.FirstName        ?? p.FirstName)
+                .SetProperty(x => x.LastName,         req.LastName         ?? p.LastName)
+                .SetProperty(x => x.BirthDate,        newBirthDate)
+                .SetProperty(x => x.AppointmentDate,  newAppointmentDate)
+                .SetProperty(x => x.Phone,            req.Phone            ?? p.Phone)
+                .SetProperty(x => x.Email,            req.Email            ?? p.Email)
+                .SetProperty(x => x.LineId,           req.LineId           ?? p.LineId)
+                .SetProperty(x => x.Facebook,         req.Facebook         ?? p.Facebook)
+                .SetProperty(x => x.Telegram,         req.Telegram         ?? p.Telegram)
+                .SetProperty(x => x.SubjectArea,      req.SubjectArea      ?? p.SubjectArea)
+                .SetProperty(x => x.Specialty,        req.Specialty        ?? p.Specialty)
+                .SetProperty(x => x.UpdatedAt,        now)
+                .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
         await cache.RemoveAsync(DetailKey(id));
         await TryInvalidateListAndStats(scope!.CacheTag);
@@ -933,6 +969,105 @@ public class PersonnelAdminController(
         await db.SaveChangesAsync(ct);
         await cache.RemoveAsync(DetailKey(id));
         return Ok(new { id, status = "unaffiliated" });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Education CRUD  GET|POST /api/v1/admin/personnel/{id}/educations
+    //                 PUT|DELETE /api/v1/admin/personnel/{id}/educations/{eduId}
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [HttpGet("{id:int}/educations")]
+    public async Task<IActionResult> GetEducations(int id, CancellationToken ct = default)
+    {
+        var scope = await GetCallerScopeAsync(readOnly: true, ct);
+        if (scope is null) return Forbid();
+
+        var items = await db.PersonnelEducations
+            .AsNoTracking()
+            .Include(e => e.EducationLevel)
+            .Where(e => e.PersonnelId == id)
+            .OrderByDescending(e => e.GraduatedYear)
+            .Select(e => new
+            {
+                e.Id,
+                e.EducationLevelId,
+                EducationLevel  = e.EducationLevel != null ? e.EducationLevel.NameTh : null,
+                e.QualificationName,
+                e.Major,
+                e.Institution,
+                e.GraduatedYear,
+            })
+            .ToListAsync(ct);
+
+        return Ok(items);
+    }
+
+    [HttpPost("{id:int}/educations")]
+    public async Task<IActionResult> AddEducation(
+        int id,
+        [FromBody] PersonnelEducationUpsertRequest req,
+        CancellationToken ct = default)
+    {
+        var (scope, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
+        var entry = new PersonnelEducation
+        {
+            PersonnelId        = id,
+            EducationLevelId   = req.EducationLevelId,
+            QualificationName  = req.QualificationName,
+            Major              = req.Major,
+            Institution        = req.Institution,
+            GraduatedYear      = req.GraduatedYear,
+        };
+        db.PersonnelEducations.Add(entry);
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveAsync(DetailKey(id));
+        return Ok(new { id = entry.Id });
+    }
+
+    [HttpPut("{id:int}/educations/{eduId:int}")]
+    public async Task<IActionResult> UpdateEducation(
+        int id,
+        int eduId,
+        [FromBody] PersonnelEducationUpsertRequest req,
+        CancellationToken ct = default)
+    {
+        var (scope, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
+        var entry = await db.PersonnelEducations
+            .FirstOrDefaultAsync(e => e.Id == eduId && e.PersonnelId == id, ct);
+        if (entry is null) return NotFound();
+
+        entry.EducationLevelId  = req.EducationLevelId  ?? entry.EducationLevelId;
+        entry.QualificationName = req.QualificationName ?? entry.QualificationName;
+        entry.Major             = req.Major             ?? entry.Major;
+        entry.Institution       = req.Institution       ?? entry.Institution;
+        entry.GraduatedYear     = req.GraduatedYear     ?? entry.GraduatedYear;
+
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveAsync(DetailKey(id));
+        return Ok(new { id = entry.Id });
+    }
+
+    [HttpDelete("{id:int}/educations/{eduId:int}")]
+    public async Task<IActionResult> DeleteEducation(
+        int id,
+        int eduId,
+        CancellationToken ct = default)
+    {
+        var (scope, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
+        var entry = await db.PersonnelEducations
+            .FirstOrDefaultAsync(e => e.Id == eduId && e.PersonnelId == id, ct);
+        if (entry is null) return NotFound();
+
+        db.PersonnelEducations.Remove(entry);
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveAsync(DetailKey(id));
+        return Ok(new { deleted = eduId });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1193,40 +1328,57 @@ public record PersonnelSearchExistingRequest(string? IdCard, string? PersonnelCo
 
 public class PersonnelAdminCreateRequest
 {
-    public string?  PersonnelCode   { get; set; }
-    public string?  TitlePrefix     { get; set; }  // plain text, e.g. "นาย" / "นาง"
-    public string   FirstName       { get; set; } = "";
-    public string   LastName        { get; set; } = "";
-    public string?  IdCard          { get; set; }
-    public string   PersonnelType   { get; set; } = "";
-    public string?  Gender          { get; set; }
-    public string?  BirthDate       { get; set; }  // ISO date string e.g. "1990-01-15"
-    public string?  Phone           { get; set; }
-    public string?  Email           { get; set; }
-    public string?  SubjectArea     { get; set; }
-    public string?  Specialty       { get; set; }
-    public string?  PositionType    { get; set; }  // plain text, e.g. "ครูผู้ช่วย"
-    public string?  AcademicRank    { get; set; }
-    public string?  SalaryLevel     { get; set; }
-    public int?     SchoolId        { get; set; }
-    public string?  SpecialRoleType { get; set; }  // none | acting_director | deputy_director
-    public string?  StartDate       { get; set; }  // ISO date string
+    public string?  PersonnelCode    { get; set; }
+    public string?  TitlePrefix      { get; set; }  // plain text e.g. "นาย"
+    public string   FirstName        { get; set; } = "";
+    public string   LastName         { get; set; } = "";
+    public string?  IdCard           { get; set; }
+    public string   PersonnelType    { get; set; } = "";
+    public string?  Gender           { get; set; }
+    public string?  BirthDate        { get; set; }  // ISO date "1990-01-15"
+    public string?  AppointmentDate  { get; set; }  // วันที่บรรจุแต่งตั้ง ISO date
+    public string?  Phone            { get; set; }
+    public string?  Email            { get; set; }
+    public string?  LineId           { get; set; }
+    public string?  Facebook         { get; set; }
+    public string?  Telegram         { get; set; }
+    public string?  SubjectArea      { get; set; }
+    public string?  Specialty        { get; set; }
+    public string?  PositionType     { get; set; }  // plain text e.g. "ครูผู้ช่วย"
+    public string?  AcademicRank     { get; set; }  // วิทยฐานะ plain text
+    public string?  SalaryLevel      { get; set; }
+    public int?     SchoolId         { get; set; }
+    public string?  SpecialRoleType  { get; set; }  // none|acting_director|deputy_director
+    public string?  StartDate        { get; set; }  // ISO date
 }
 
 public class PersonnelAdminUpdateRequest
 {
-    public string?  TitlePrefix     { get; set; }
-    public string?  FirstName       { get; set; }
-    public string?  LastName        { get; set; }
-    public string?  Phone           { get; set; }
-    public string?  Email           { get; set; }
-    public string?  SubjectArea     { get; set; }
-    public string?  Specialty       { get; set; }
-    public string?  PositionType    { get; set; }
-    public string?  AcademicRank    { get; set; }
-    public string?  SalaryLevel     { get; set; }
-    public string?  BirthDate       { get; set; }
-    public string?  SpecialRoleType { get; set; }
+    public string?  TitlePrefix      { get; set; }
+    public string?  FirstName        { get; set; }
+    public string?  LastName         { get; set; }
+    public string?  BirthDate        { get; set; }
+    public string?  AppointmentDate  { get; set; }  // วันที่บรรจุแต่งตั้ง
+    public string?  Phone            { get; set; }
+    public string?  Email            { get; set; }
+    public string?  LineId           { get; set; }
+    public string?  Facebook         { get; set; }
+    public string?  Telegram         { get; set; }
+    public string?  SubjectArea      { get; set; }
+    public string?  Specialty        { get; set; }
+    public string?  PositionType     { get; set; }
+    public string?  AcademicRank     { get; set; }
+    public string?  SalaryLevel      { get; set; }
+    public string?  SpecialRoleType  { get; set; }
+}
+
+public class PersonnelEducationUpsertRequest
+{
+    public int?     EducationLevelId   { get; set; }
+    public string?  QualificationName  { get; set; }
+    public string?  Major              { get; set; }
+    public string?  Institution        { get; set; }
+    public int?     GraduatedYear      { get; set; }
 }
 
 public record AssignToSchoolRequest(

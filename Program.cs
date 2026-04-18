@@ -293,6 +293,17 @@ using (var scope = app.Services.CreateScope())
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AcademicStandingTypes_Code"" ON ""AcademicStandingTypes"" (""Code"");
 
+        -- EducationLevels table (ระดับวุฒิการศึกษา)
+        CREATE TABLE IF NOT EXISTS ""EducationLevels"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Code"" VARCHAR(50) NOT NULL,
+            ""NameTh"" VARCHAR(200) NOT NULL,
+            ""NameEn"" VARCHAR(200),
+            ""Level"" INTEGER NOT NULL DEFAULT 0,
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EducationLevels_Code"" ON ""EducationLevels"" (""Code"");
+
         -- WorkGroups: add CreatedAt if missing
         ALTER TABLE ""WorkGroups"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
@@ -407,6 +418,22 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMPTZ NULL;
         ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""UpdatedBy"" INTEGER NULL;
         CREATE INDEX IF NOT EXISTS ""IX_Personnel_SubjectArea"" ON ""Personnel"" (""SubjectArea"");
+        -- Personnel: contact channels + appointment date (Phase A.2 — personnel profile)
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""Facebook""        TEXT NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""Telegram""        TEXT NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""AppointmentDate"" DATE NULL;
+        -- PersonnelEducation: structured education level
+        ALTER TABLE ""PersonnelEducations"" ADD COLUMN IF NOT EXISTS ""EducationLevelId""   INTEGER NULL;
+        ALTER TABLE ""PersonnelEducations"" ADD COLUMN IF NOT EXISTS ""QualificationName""  VARCHAR(300) NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelEducations_EducationLevelId""
+            ON ""PersonnelEducations"" (""EducationLevelId"");
+        DO $$ BEGIN
+            ALTER TABLE ""PersonnelEducations""
+                ADD CONSTRAINT ""FK_PersonnelEducations_EducationLevels_EducationLevelId""
+                FOREIGN KEY (""EducationLevelId"") REFERENCES ""EducationLevels""(""Id"") ON DELETE SET NULL;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        -- AreaPermissionPolicy: allow personnel self-edit flag
+        ALTER TABLE ""AreaPermissionPolicies"" ADD COLUMN IF NOT EXISTS ""AllowPersonnel"" BOOLEAN NOT NULL DEFAULT FALSE;
         DO $$ BEGIN
             ALTER TABLE ""Personnel""
                 ADD CONSTRAINT ""FK_Personnel_PositionTypes_PositionTypeId""

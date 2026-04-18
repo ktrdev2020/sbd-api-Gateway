@@ -151,4 +151,20 @@ public class RefDataController : ControllerBase
             : data.Where(p => p.Category == category).ToList();
         return Ok(result);
     }
+
+    [HttpGet("education-levels")]
+    public async Task<ActionResult> GetEducationLevels()
+    {
+        const string cacheKey = "refdata:education-levels";
+        var cached = await _cache.GetAsync<List<EducationLevel>>(cacheKey);
+        if (cached != null)
+            return Ok(cached.Where(e => e.IsActive).OrderBy(e => e.Level));
+
+        var data = await _context.EducationLevels.AsNoTracking()
+            .Where(e => e.IsActive)
+            .OrderBy(e => e.Level)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
 }

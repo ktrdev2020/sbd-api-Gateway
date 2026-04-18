@@ -57,6 +57,44 @@ namespace Gateway.Migrations
                     b.ToTable("AcademicStandingTypes");
                 });
 
+            modelBuilder.Entity("SBD.Domain.Entities.EducationLevel", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<int>("Level")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("NameEn")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("NameTh")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("EducationLevels");
+                });
+
             modelBuilder.Entity("SBD.Domain.Entities.AcademicYear", b =>
                 {
                     b.Property<int>("Id")
@@ -324,6 +362,10 @@ namespace Gateway.Migrations
 
                     b.Property<bool>("AllowSchoolAdmin")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowPersonnel")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<int>("AreaId")
                         .HasColumnType("integer");
@@ -1209,6 +1251,15 @@ namespace Gateway.Migrations
                     b.Property<string>("LineId")
                         .HasColumnType("text");
 
+                    b.Property<string>("Facebook")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Telegram")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly?>("AppointmentDate")
+                        .HasColumnType("date");
+
                     b.Property<string>("PersonnelCode")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1287,9 +1338,12 @@ namespace Gateway.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("Degree")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int?>("EducationLevelId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("QualificationName")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<int?>("GraduatedYear")
                         .HasColumnType("integer");
@@ -1304,6 +1358,8 @@ namespace Gateway.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("EducationLevelId");
 
                     b.HasIndex("PersonnelId");
 
