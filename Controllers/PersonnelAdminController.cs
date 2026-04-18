@@ -453,6 +453,8 @@ public class PersonnelAdminController(
             p.Specialty,
             p.TrashedAt,
             TitlePrefix  = p.TitlePrefix?.NameTh,
+            p.FirstName,
+            p.LastName,
             PositionType = p.PositionType?.NameTh,
             AcademicRank = p.AcademicStandingType?.NameTh,
             SalaryLevel  = primarySa?.SalaryLevel,
@@ -669,34 +671,45 @@ public class PersonnelAdminController(
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int.TryParse(userIdStr, out var requestedBy);
 
+        // Resolve FK lookups before the ExecuteUpdateAsync call.
+        int? newTitlePrefixId  = p.TitlePrefixId;
+        int? newPositionTypeId = p.PositionTypeId;
+
         if (!string.IsNullOrWhiteSpace(req.TitlePrefix))
-        {
-            var tid = await db.TitlePrefixes
+            newTitlePrefixId = await db.TitlePrefixes
                 .Where(t => t.NameTh == req.TitlePrefix.Trim())
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
-            p.TitlePrefixId = tid;
-        }
+
         if (!string.IsNullOrWhiteSpace(req.PositionType))
-        {
-            var pid = await db.PositionTypes
+            newPositionTypeId = await db.PositionTypes
                 .Where(t => t.NameTh == req.PositionType.Trim())
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
-            p.PositionTypeId = pid;
-        }
-        if (req.FirstName is not null)  p.FirstName  = req.FirstName;
-        if (req.LastName is not null)   p.LastName   = req.LastName;
-        if (req.Phone is not null)      p.Phone      = req.Phone;
-        if (req.Email is not null)      p.Email      = req.Email;
-        if (req.SubjectArea is not null) p.SubjectArea = req.SubjectArea;
-        if (req.Specialty is not null)  p.Specialty  = req.Specialty;
-        if (req.BirthDate is not null && DateOnly.TryParse(req.BirthDate, out var updBd))
-            p.BirthDate = updBd;
-        p.UpdatedAt = DateTimeOffset.UtcNow;
-        p.UpdatedBy = requestedBy;
 
-        await db.SaveChangesAsync(ct);
+        DateOnly? newBirthDate = p.BirthDate;
+        if (req.BirthDate is not null && DateOnly.TryParse(req.BirthDate, out var updBd))
+            newBirthDate = updBd;
+
+        var now = DateTimeOffset.UtcNow;
+
+        // Use ExecuteUpdateAsync (direct SQL) to avoid EF Core change-tracking
+        // issues with HasDefaultValue / HasDefaultValueSql on certain columns.
+        await db.Personnel
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.TitlePrefixId,  newTitlePrefixId)
+                .SetProperty(x => x.PositionTypeId, newPositionTypeId)
+                .SetProperty(x => x.FirstName,   req.FirstName   ?? p.FirstName)
+                .SetProperty(x => x.LastName,    req.LastName    ?? p.LastName)
+                .SetProperty(x => x.Phone,       req.Phone       ?? p.Phone)
+                .SetProperty(x => x.Email,       req.Email       ?? p.Email)
+                .SetProperty(x => x.SubjectArea, req.SubjectArea ?? p.SubjectArea)
+                .SetProperty(x => x.Specialty,   req.Specialty   ?? p.Specialty)
+                .SetProperty(x => x.BirthDate,   newBirthDate)
+                .SetProperty(x => x.UpdatedAt,   now)
+                .SetProperty(x => x.UpdatedBy,   requestedBy),
+                ct);
         await cache.RemoveAsync(DetailKey(id));
         await TryInvalidateListAndStats(scope!.CacheTag);
 
