@@ -599,9 +599,9 @@ public class PersonnelAdminController(
                 .FirstOrDefaultAsync(ct);
         }
 
-        // Resolve string PositionType → FK (nullable, non-blocking)
-        int? positionTypeId = null;
-        if (!string.IsNullOrWhiteSpace(req.PositionType))
+        // Resolve PositionType → FK: prefer direct ID, fall back to string lookup
+        int? positionTypeId = req.PositionTypeId;
+        if (positionTypeId == null && !string.IsNullOrWhiteSpace(req.PositionType))
         {
             positionTypeId = await db.PositionTypes
                 .Where(t => t.NameTh == req.PositionType.Trim())
@@ -709,7 +709,9 @@ public class PersonnelAdminController(
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
 
-        if (!string.IsNullOrWhiteSpace(req.PositionType))
+        if (req.PositionTypeId.HasValue)
+            newPositionTypeId = req.PositionTypeId;
+        else if (!string.IsNullOrWhiteSpace(req.PositionType))
             newPositionTypeId = await db.PositionTypes
                 .Where(t => t.NameTh == req.PositionType.Trim())
                 .Select(t => (int?)t.Id)
@@ -1344,7 +1346,8 @@ public class PersonnelAdminCreateRequest
     public string?  Telegram         { get; set; }
     public string?  SubjectArea      { get; set; }
     public string?  Specialty        { get; set; }
-    public string?  PositionType     { get; set; }  // plain text e.g. "ครูผู้ช่วย"
+    public int?     PositionTypeId   { get; set; }  // direct FK — preferred
+    public string?  PositionType     { get; set; }  // plain text fallback e.g. "ครูผู้ช่วย"
     public string?  AcademicRank     { get; set; }  // วิทยฐานะ plain text
     public string?  SalaryLevel      { get; set; }
     public int?     SchoolId         { get; set; }
@@ -1366,7 +1369,8 @@ public class PersonnelAdminUpdateRequest
     public string?  Telegram         { get; set; }
     public string?  SubjectArea      { get; set; }
     public string?  Specialty        { get; set; }
-    public string?  PositionType     { get; set; }
+    public int?     PositionTypeId   { get; set; }  // direct FK — preferred
+    public string?  PositionType     { get; set; }  // plain text fallback
     public string?  AcademicRank     { get; set; }
     public string?  SalaryLevel      { get; set; }
     public string?  SpecialRoleType  { get; set; }
