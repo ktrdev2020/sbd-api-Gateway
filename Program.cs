@@ -531,6 +531,68 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Gateway shadow properties + academic calendar + Authority A.1 tables ensured.");
 
+    // ── Phase A.3 — Personnel Management: approval workflow + secondment ──────
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- ============================================================================
+        -- Phase A.3 — Personnel Management system
+        -- ============================================================================
+
+        -- Personnel: affiliation status (affiliated | unaffiliated | trashed)
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""AffiliationStatus"" VARCHAR(20) NOT NULL DEFAULT 'affiliated';
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""TrashedAt""          TIMESTAMPTZ NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""TrashedByUserId""    INTEGER NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Personnel_AffiliationStatus"" ON ""Personnel"" (""AffiliationStatus"");
+
+        -- PersonnelSchoolAssignment: special roles
+        -- none | acting_director | deputy_director | acting_deputy
+        ALTER TABLE ""PersonnelSchoolAssignments""
+            ADD COLUMN IF NOT EXISTS ""SpecialRoleType"" VARCHAR(30) NOT NULL DEFAULT 'none';
+
+        -- Approval cycle: one record per school per academic year
+        -- Status lifecycle: open -> staff_submitted -> deputy_review ->
+        --   principal_review -> locked -> area_accepted  (reopen -> open)
+        CREATE TABLE IF NOT EXISTS ""PersonnelApprovalCycles"" (
+            ""Id""                       SERIAL PRIMARY KEY,
+            ""SchoolId""                 INTEGER NOT NULL REFERENCES ""Schools""(""Id"") ON DELETE CASCADE,
+            ""AcademicYearId""           INTEGER NOT NULL REFERENCES ""AcademicYears""(""Id"") ON DELETE RESTRICT,
+            ""Status""                   VARCHAR(30) NOT NULL DEFAULT 'open',
+            ""OpenedAt""                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""StaffSubmittedAt""         TIMESTAMPTZ NULL,
+            ""StaffSubmittedByUserId""   INTEGER NULL,
+            ""DeputyReviewedAt""         TIMESTAMPTZ NULL,
+            ""DeputyReviewedByUserId""   INTEGER NULL,
+            ""PrincipalApprovedAt""      TIMESTAMPTZ NULL,
+            ""PrincipalApprovedByUserId"" INTEGER NULL,
+            ""AreaAcceptedAt""           TIMESTAMPTZ NULL,
+            ""AreaAcceptedByUserId""     INTEGER NULL,
+            ""ReopenedAt""               TIMESTAMPTZ NULL,
+            ""ReopenedByUserId""         INTEGER NULL,
+            ""ReopenNote""              TEXT NULL,
+            UNIQUE (""SchoolId"", ""AcademicYearId"")
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelApprovalCycles_SchoolId""
+            ON ""PersonnelApprovalCycles"" (""SchoolId"");
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelApprovalCycles_Status""
+            ON ""PersonnelApprovalCycles"" (""Status"");
+
+        -- Personnel secondment: school teacher seconded to area office
+        CREATE TABLE IF NOT EXISTS ""PersonnelSecondments"" (
+            ""Id""                   SERIAL PRIMARY KEY,
+            ""PersonnelId""          INTEGER NOT NULL REFERENCES ""Personnel""(""Id"") ON DELETE CASCADE,
+            ""SecondedToAreaId""     INTEGER NOT NULL REFERENCES ""Areas""(""Id"") ON DELETE CASCADE,
+            ""StartDate""            DATE NOT NULL,
+            ""EndDate""              DATE NULL,
+            ""AssignedModuleCodes""  JSONB NOT NULL DEFAULT '[]',
+            ""ApprovedByUserId""     INTEGER NULL,
+            ""CreatedAt""            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelSecondments_PersonnelId""
+            ON ""PersonnelSecondments"" (""PersonnelId"");
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelSecondments_SecondedToAreaId""
+            ON ""PersonnelSecondments"" (""SecondedToAreaId"");
+    ");
+    Console.WriteLine("[Migration] Phase A.3 — Personnel approval cycles + secondments ensured.");
+
     // ── Phase B.1 — Authority System: authz_* tables ─────────────────────────
     await db.Database.ExecuteSqlRawAsync(@"
         -- CapabilityDefinition: catalog of all system + module capabilities
@@ -1044,6 +1106,8 @@ using (var scope = app.Services.CreateScope())
          "อนุญาตให้บุคลากรเพิ่ม/แก้ไข/ลบประวัติการศึกษาของตนเอง"),
         ("user.manage_school_users",
          "อนุญาตให้ผู้บริหารสถานศึกษาจัดการบัญชีผู้ใช้งานในโรงเรียนของตนเอง"),
+        ("personnel.manage_school_personnel",
+         "อนุญาตให้ผู้บริหารสถานศึกษาเพิ่ม/แก้ไข/ลบข้อมูลบุคลากรในโรงเรียนของตนเอง"),
     };
     var areas = await db.Areas.AsNoTracking().Select(a => a.Id).ToListAsync();
     foreach (var areaId in areas)
