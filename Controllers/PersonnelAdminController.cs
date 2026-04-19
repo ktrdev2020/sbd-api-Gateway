@@ -210,7 +210,7 @@ public class PersonnelAdminController(
                 (p.IdCard != null && p.IdCard.Contains(search)));
 
         if (!string.IsNullOrWhiteSpace(type))
-            q = q.Where(p => p.PersonnelType == type);
+            q = q.Where(p => p.PersonnelTypeNav.Code == type);
 
         if (!string.IsNullOrWhiteSpace(status))
             q = q.Where(p => p.AffiliationStatus == status);
@@ -218,7 +218,7 @@ public class PersonnelAdminController(
             q = q.Where(p => p.AffiliationStatus == "affiliated");
 
         if (!string.IsNullOrWhiteSpace(subjectArea))
-            q = q.Where(p => p.SubjectArea == subjectArea);
+            q = q.Where(p => p.SubjectAreaNav != null && p.SubjectAreaNav.NameTh == subjectArea);
 
         if (schoolId.HasValue)
             q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolId == schoolId.Value && sa.IsPrimary));
@@ -233,10 +233,12 @@ public class PersonnelAdminController(
                 p.Id,
                 p.PersonnelCode,
                 p.IdCard,
-                p.PersonnelType,
+                PersonnelTypeCode = p.PersonnelTypeNav.Code,
                 p.AffiliationStatus,
-                p.SubjectArea,
-                p.Specialty,
+                SubjectAreaId = p.SubjectAreaId,
+                SubjectAreaNameTh = p.SubjectAreaNav != null ? p.SubjectAreaNav.NameTh : null,
+                SpecialtyId = p.SpecialtyId,
+                SpecialtyNameTh = p.SpecialtyNav != null ? p.SpecialtyNav.NameTh : null,
                 TitlePrefix = p.TitlePrefix != null ? p.TitlePrefix.NameTh : null,
                 p.FirstName,
                 p.LastName,
@@ -288,7 +290,7 @@ public class PersonnelAdminController(
         q = ApplyScopeFilter(q, scope);
 
         // byType as Record<string,number>
-        var byTypeList = await q.GroupBy(p => p.PersonnelType)
+        var byTypeList = await q.GroupBy(p => p.PersonnelTypeNav.Code)
             .Select(g => new { Key = g.Key, Count = g.Count() })
             .ToListAsync(ct);
         var byType = byTypeList.ToDictionary(x => x.Key, x => x.Count);
@@ -350,7 +352,7 @@ public class PersonnelAdminController(
             {
                 p.Id,
                 p.PersonnelCode,
-                p.PersonnelType,
+                PersonnelTypeCode = p.PersonnelTypeNav.Code,
                 TitlePrefix = p.TitlePrefix != null ? p.TitlePrefix.NameTh : null,
                 p.FirstName,
                 p.LastName,
@@ -436,6 +438,9 @@ public class PersonnelAdminController(
             .Include(x => x.TitlePrefix)
             .Include(x => x.PositionType)
             .Include(x => x.AcademicStandingType)
+            .Include(x => x.PersonnelTypeNav)
+            .Include(x => x.SubjectAreaNav)
+            .Include(x => x.SpecialtyNav)
             .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.School)
             .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.SalaryLevelNav)
             .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.PositionTypeNav)
@@ -461,7 +466,8 @@ public class PersonnelAdminController(
             p.Id,
             p.PersonnelCode,
             p.IdCard,
-            p.PersonnelType,
+            PersonnelTypeCode = p.PersonnelTypeNav?.Code,
+            PersonnelTypeId = p.PersonnelTypeId,
             p.AffiliationStatus,
             p.Gender,
             p.BirthDate,
@@ -472,8 +478,10 @@ public class PersonnelAdminController(
             p.Facebook,
             p.Telegram,
             p.Photo,
-            p.SubjectArea,
-            p.Specialty,
+            SubjectAreaId = p.SubjectAreaId,
+            SubjectAreaNameTh = p.SubjectAreaNav?.NameTh,
+            SpecialtyId = p.SpecialtyId,
+            SpecialtyNameTh = p.SpecialtyNav?.NameTh,
             p.TrashedAt,
             TitlePrefix      = p.TitlePrefix?.NameTh,
             TitlePrefixId    = p.TitlePrefixId,
@@ -579,7 +587,7 @@ public class PersonnelAdminController(
                 match.Id,
                 match.PersonnelCode,
                 match.IdCard,
-                match.PersonnelType,
+                PersonnelTypeCode = match.PersonnelTypeNav?.Code,
                 match.AffiliationStatus,
                 TitlePrefix = match.TitlePrefix?.NameTh,
                 match.FirstName,
@@ -644,20 +652,32 @@ public class PersonnelAdminController(
         }
 
         // Resolve PersonnelType → FK: prefer direct ID, fall back to code lookup
-        int? personnelTypeId   = req.PersonnelTypeId;
-        string personnelTypeCode = req.PersonnelType ?? "";
-        if (personnelTypeId.HasValue && string.IsNullOrEmpty(personnelTypeCode))
-        {
-            personnelTypeCode = await db.PersonnelTypes
-                .Where(t => t.Id == personnelTypeId.Value)
-                .Select(t => t.Code)
-                .FirstOrDefaultAsync(ct) ?? req.PersonnelType ?? "";
-        }
-        else if (!personnelTypeId.HasValue && !string.IsNullOrWhiteSpace(personnelTypeCode))
+        int? personnelTypeId = req.PersonnelTypeId;
+        if (!personnelTypeId.HasValue && !string.IsNullOrWhiteSpace(req.PersonnelType))
         {
             personnelTypeId = await db.PersonnelTypes
-                .Where(t => t.Code == personnelTypeCode.Trim())
+                .Where(t => t.Code == req.PersonnelType.Trim())
                 .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        // Resolve SubjectAreaId: prefer direct ID, fall back to name lookup
+        int? subjectAreaId = req.SubjectAreaId;
+        if (!subjectAreaId.HasValue && !string.IsNullOrWhiteSpace(req.SubjectArea))
+        {
+            subjectAreaId = await db.SubjectAreas
+                .Where(s => s.NameTh == req.SubjectArea.Trim())
+                .Select(s => (int?)s.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        // Resolve SpecialtyId: prefer direct ID, fall back to name lookup
+        int? specialtyId = req.SpecialtyId;
+        if (!specialtyId.HasValue && !string.IsNullOrWhiteSpace(req.Specialty))
+        {
+            specialtyId = await db.Specialties
+                .Where(s => s.NameTh == req.Specialty.Trim())
+                .Select(s => (int?)s.Id)
                 .FirstOrDefaultAsync(ct);
         }
 
@@ -677,8 +697,7 @@ public class PersonnelAdminController(
             FirstName         = req.FirstName,
             LastName          = req.LastName,
             IdCard            = req.IdCard,
-            PersonnelTypeId   = personnelTypeId,
-            PersonnelType     = personnelTypeCode,
+            PersonnelTypeId   = personnelTypeId ?? throw new InvalidOperationException("ไม่พบประเภทบุคลากร"),
             Gender            = req.Gender?.Length > 0 ? req.Gender[0] : 'U',
             BirthDate         = DateOnly.TryParse(req.BirthDate, out var bd) ? bd : null,
             AppointmentDate   = DateOnly.TryParse(req.AppointmentDate, out var apd) ? apd : null,
@@ -687,8 +706,8 @@ public class PersonnelAdminController(
             LineId            = req.LineId,
             Facebook          = req.Facebook,
             Telegram          = req.Telegram,
-            SubjectArea       = req.SubjectArea,
-            Specialty         = req.Specialty,
+            SubjectAreaId     = subjectAreaId,
+            SpecialtyId       = specialtyId,
             PositionTypeId    = positionTypeId,
             AffiliationStatus = "affiliated",
             UpdatedAt         = DateTimeOffset.UtcNow,
@@ -723,7 +742,7 @@ public class PersonnelAdminController(
                 IdCard            = req.IdCard,
                 FirstName         = personnel.FirstName,
                 LastName          = personnel.LastName,
-                PersonnelType     = personnel.PersonnelType,
+                PersonnelType     = req.PersonnelType ?? "",
                 SchoolId          = targetSchoolId,
                 RequestedByUserId = requestedBy,
             }, ct);
@@ -774,24 +793,36 @@ public class PersonnelAdminController(
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
 
-        int?   newPersonnelTypeId   = p.PersonnelTypeId;
-        string newPersonnelTypeCode = p.PersonnelType ?? "";
+        int? newPersonnelTypeId = p.PersonnelTypeId;
         if (req.PersonnelTypeId.HasValue)
-        {
             newPersonnelTypeId = req.PersonnelTypeId;
-            newPersonnelTypeCode = await db.PersonnelTypes
-                .Where(t => t.Id == req.PersonnelTypeId.Value)
-                .Select(t => t.Code)
-                .FirstOrDefaultAsync(ct) ?? p.PersonnelType ?? "";
-        }
         else if (!string.IsNullOrWhiteSpace(req.PersonnelType))
-        {
-            newPersonnelTypeCode = req.PersonnelType.Trim();
-            newPersonnelTypeId   = await db.PersonnelTypes
-                .Where(t => t.Code == newPersonnelTypeCode)
+            newPersonnelTypeId = await db.PersonnelTypes
+                .Where(t => t.Code == req.PersonnelType.Trim())
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct) ?? p.PersonnelTypeId;
-        }
+
+        // Resolve SubjectAreaId
+        int? newSubjectAreaId = p.SubjectAreaId;
+        if (req.SubjectAreaId.HasValue)
+            newSubjectAreaId = req.SubjectAreaId;
+        else if (req.SubjectAreaId == null && req.SubjectArea is not null)
+            newSubjectAreaId = string.IsNullOrWhiteSpace(req.SubjectArea) ? null
+                : await db.SubjectAreas
+                    .Where(s => s.NameTh == req.SubjectArea.Trim())
+                    .Select(s => (int?)s.Id)
+                    .FirstOrDefaultAsync(ct) ?? p.SubjectAreaId;
+
+        // Resolve SpecialtyId
+        int? newSpecialtyId = p.SpecialtyId;
+        if (req.SpecialtyId.HasValue)
+            newSpecialtyId = req.SpecialtyId;
+        else if (req.SpecialtyId == null && req.Specialty is not null)
+            newSpecialtyId = string.IsNullOrWhiteSpace(req.Specialty) ? null
+                : await db.Specialties
+                    .Where(s => s.NameTh == req.Specialty.Trim())
+                    .Select(s => (int?)s.Id)
+                    .FirstOrDefaultAsync(ct) ?? p.SpecialtyId;
 
         // Resolve AcademicStandingTypeId: prefer direct FK, fall back to longest-suffix text match.
         if (req.AcademicStandingTypeId.HasValue)
@@ -831,7 +862,8 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.PositionTypeId,          newPositionTypeId)
                 .SetProperty(x => x.AcademicStandingTypeId,  newAcademicStandingId)
                 .SetProperty(x => x.PersonnelTypeId,         newPersonnelTypeId)
-                .SetProperty(x => x.PersonnelType,           newPersonnelTypeCode)
+                .SetProperty(x => x.SubjectAreaId,           newSubjectAreaId)
+                .SetProperty(x => x.SpecialtyId,             newSpecialtyId)
                 .SetProperty(x => x.FirstName,        req.FirstName        ?? p.FirstName)
                 .SetProperty(x => x.LastName,         req.LastName         ?? p.LastName)
                 .SetProperty(x => x.BirthDate,        newBirthDate)
@@ -841,8 +873,6 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.LineId,           req.LineId           ?? p.LineId)
                 .SetProperty(x => x.Facebook,         req.Facebook         ?? p.Facebook)
                 .SetProperty(x => x.Telegram,         req.Telegram         ?? p.Telegram)
-                .SetProperty(x => x.SubjectArea,      req.SubjectArea      ?? p.SubjectArea)
-                .SetProperty(x => x.Specialty,        req.Specialty        ?? p.Specialty)
                 .SetProperty(x => x.UpdatedAt,        now)
                 .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
@@ -1498,8 +1528,10 @@ public class PersonnelAdminCreateRequest
     public string?  LineId           { get; set; }
     public string?  Facebook         { get; set; }
     public string?  Telegram         { get; set; }
-    public string?  SubjectArea      { get; set; }
-    public string?  Specialty        { get; set; }
+    public int?     SubjectAreaId    { get; set; }  // direct FK — preferred
+    public string?  SubjectArea      { get; set; }  // name fallback (legacy)
+    public int?     SpecialtyId      { get; set; }  // direct FK — preferred
+    public string?  Specialty        { get; set; }  // name fallback (legacy)
     public int?     PositionTypeId   { get; set; }  // direct FK — preferred
     public string?  PositionType     { get; set; }  // plain text fallback e.g. "ครูผู้ช่วย"
     public string?  AcademicRank     { get; set; }  // วิทยฐานะ plain text
@@ -1525,8 +1557,10 @@ public class PersonnelAdminUpdateRequest
     public string?  LineId           { get; set; }
     public string?  Facebook         { get; set; }
     public string?  Telegram         { get; set; }
-    public string?  SubjectArea      { get; set; }
-    public string?  Specialty        { get; set; }
+    public int?     SubjectAreaId    { get; set; }  // direct FK — preferred
+    public string?  SubjectArea      { get; set; }  // name fallback (legacy)
+    public int?     SpecialtyId      { get; set; }  // direct FK — preferred
+    public string?  Specialty        { get; set; }  // name fallback (legacy)
     public int?     PositionTypeId          { get; set; }  // direct FK — preferred
     public string?  PositionType            { get; set; }  // plain text fallback
     public int?     AcademicStandingTypeId  { get; set; }  // FK → AcademicStandingTypes — preferred over AcademicRank text

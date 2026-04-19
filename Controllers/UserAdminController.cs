@@ -288,7 +288,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         {
             query = query.Where(u =>
                 u.Personnel != null &&
-                u.Personnel.SubjectArea == subjectArea);
+                u.Personnel.SubjectAreaNav != null &&
+                u.Personnel.SubjectAreaNav.NameTh == subjectArea);
         }
 
         // ── District filter (via Personnel→PrimaryAssignment→School→Address→District) ──
@@ -359,7 +360,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 u.LastLoginAt,
                 u.UpdatedAt,
                 PersonnelId = u.Personnel?.Id,
-                PersonnelType = u.Personnel?.PersonnelType,
+                PersonnelTypeCode = u.Personnel?.PersonnelTypeNav?.Code,
                 PersonnelFirstName = u.Personnel?.FirstName,
                 PersonnelLastName = u.Personnel?.LastName,
                 PersonnelTitle = u.Personnel?.TitlePrefix?.NameTh,
@@ -629,13 +630,13 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 Title = user.Personnel.TitlePrefix?.NameTh,
                 user.Personnel.FirstName,
                 user.Personnel.LastName,
-                user.Personnel.PersonnelType,
+                PersonnelTypeCode = user.Personnel.PersonnelTypeNav?.Code,
                 user.Personnel.IdCard,
                 user.Personnel.PersonnelCode,
                 user.Personnel.Phone,
                 user.Personnel.Email,
-                user.Personnel.SubjectArea,
-                user.Personnel.Specialty,
+                SubjectAreaId = user.Personnel.SubjectAreaId,
+                SpecialtyId = user.Personnel.SpecialtyId,
                 PositionType = user.Personnel.PositionType?.NameTh,
                 SchoolAssignments = user.Personnel.SchoolAssignments.Select(sa => new
                 {
@@ -944,7 +945,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             });
 
             // ผู้บริหาร (ผอ./รองผอ.) → school_admin, ทุกอย่างอื่น → teacher
-            var roleCode = IsSchoolAdminPersonnel(p.PositionType?.Category, p.PersonnelType)
+            var roleCode = IsSchoolAdminPersonnel(p.PositionType?.Category, p.PersonnelTypeNav?.Code)
                 ? "school_admin" : "teacher";
             if (roles.TryGetValue(roleCode, out var roleId))
             {
@@ -1091,7 +1092,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             {
                 var isAdmin = IsSchoolAdminPersonnel(
                     u.Personnel?.PositionType?.Category,
-                    u.Personnel?.PersonnelType);
+                    u.Personnel?.PersonnelTypeNav?.Code);
                 if (isAdmin && !hasSchoolAdminRole) continue;
                 if (!isAdmin && !hasTeacherRole) continue;
                 var roleId = isAdmin ? schoolAdminRoleId : teacherRoleId;

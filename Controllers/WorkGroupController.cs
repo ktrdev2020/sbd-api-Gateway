@@ -35,7 +35,7 @@ public class WorkGroupController : ControllerBase
                 {
                     m.Id, m.PersonnelId, m.Role, m.StartDate, m.EndDate,
                     PersonnelName = m.Personnel.FirstName + " " + m.Personnel.LastName,
-                    m.Personnel.PersonnelType
+                    PersonnelTypeCode = m.Personnel.PersonnelTypeNav.Code
                 })
             })
             .ToListAsync();

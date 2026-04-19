@@ -33,6 +33,8 @@ public class AreaPersonnelController : ControllerBase
     {
         var query = _context.Personnel
             .Include(p => p.TitlePrefix)
+            .Include(p => p.PersonnelTypeNav)
+            .Include(p => p.SubjectAreaNav)
             .Include(p => p.SchoolAssignments)
                 .ThenInclude(a => a.School)
             .AsQueryable();
@@ -49,7 +51,7 @@ public class AreaPersonnelController : ControllerBase
         }
         else if (scope == "area")
         {
-            query = query.Where(p => p.PersonnelType == "Staff" || p.PersonnelType == "AreaOfficer");
+            query = query.Where(p => p.PersonnelTypeNav.Code == "Staff");
         }
 
         // Filter by specific school
@@ -59,10 +61,10 @@ public class AreaPersonnelController : ControllerBase
                 p.SchoolAssignments.Any(a => a.SchoolId == schoolId.Value && a.IsPrimary));
         }
 
-        // Filter by personnel type
+        // Filter by personnel type (by code)
         if (!string.IsNullOrEmpty(type))
         {
-            query = query.Where(p => p.PersonnelType == type);
+            query = query.Where(p => p.PersonnelTypeNav.Code == type);
         }
 
         // Search by name
@@ -87,7 +89,8 @@ public class AreaPersonnelController : ControllerBase
                 TitlePrefix = p.TitlePrefix != null ? p.TitlePrefix.NameTh : null,
                 FirstName = p.FirstName,
                 LastName = p.LastName,
-                PersonnelType = p.PersonnelType,
+                PersonnelTypeCode = p.PersonnelTypeNav.Code,
+                PersonnelTypeNameTh = p.PersonnelTypeNav.NameTh,
                 Gender = p.Gender,
                 Phone = p.Phone,
                 Email = p.Email,
@@ -120,6 +123,9 @@ public class AreaPersonnelController : ControllerBase
     {
         var p = await _context.Personnel
             .Include(x => x.TitlePrefix)
+            .Include(x => x.PersonnelTypeNav)
+            .Include(x => x.SubjectAreaNav)
+            .Include(x => x.SpecialtyNav)
             .Include(x => x.SchoolAssignments).ThenInclude(a => a.School)
             .Include(x => x.Educations).ThenInclude(e => e.EducationLevel)
             .Include(x => x.Certifications)
@@ -133,7 +139,13 @@ public class AreaPersonnelController : ControllerBase
             TitlePrefix = p.TitlePrefix?.NameTh,
             p.FirstName, p.LastName,
             FullName = $"{p.TitlePrefix?.NameTh ?? ""}{p.FirstName} {p.LastName}".Trim(),
-            p.PersonnelType, p.Gender, p.BirthDate, p.IdCard,
+            PersonnelTypeCode = p.PersonnelTypeNav.Code,
+            PersonnelTypeNameTh = p.PersonnelTypeNav.NameTh,
+            p.Gender, p.BirthDate, p.IdCard,
+            SubjectAreaId = p.SubjectAreaId,
+            SubjectAreaNameTh = p.SubjectAreaNav != null ? p.SubjectAreaNav.NameTh : null,
+            SpecialtyId = p.SpecialtyId,
+            SpecialtyNameTh = p.SpecialtyNav != null ? p.SpecialtyNav.NameTh : null,
             p.Phone, p.Email, p.LineId, p.Photo,
             Assignments = p.SchoolAssignments.Select(a => new
             {
@@ -169,7 +181,7 @@ public class AreaPersonnelController : ControllerBase
             PersonnelCode = request.PersonnelCode,
             FirstName = request.FirstName,
             LastName = request.LastName,
-            PersonnelType = request.PersonnelType,
+            PersonnelTypeId = request.PersonnelTypeId,
             Gender = request.Gender,
             TitlePrefixId = request.TitlePrefixId,
             IdCard = request.IdCard,
@@ -213,7 +225,9 @@ public class AreaPersonnelController : ControllerBase
         if (request.Phone != null) person.Phone = request.Phone;
         if (request.Email != null) person.Email = request.Email;
         if (request.LineId != null) person.LineId = request.LineId;
-        if (request.PersonnelType != null) person.PersonnelType = request.PersonnelType;
+        if (request.PersonnelTypeId.HasValue) person.PersonnelTypeId = request.PersonnelTypeId.Value;
+        if (request.SubjectAreaId.HasValue) person.SubjectAreaId = request.SubjectAreaId;
+        if (request.SpecialtyId.HasValue) person.SpecialtyId = request.SpecialtyId;
 
         await _context.SaveChangesAsync();
         return Ok(new { person.Id, person.FirstName, person.LastName });
@@ -244,15 +258,15 @@ public class AreaPersonnelController : ControllerBase
             query = query.Where(a => a.SchoolId == schoolId.Value);
 
         var assignments = await query
-            .Include(a => a.Personnel)
+            .Include(a => a.Personnel).ThenInclude(p => p.PersonnelTypeNav)
             .ToListAsync();
 
         return Ok(new
         {
             Total = assignments.Count,
-            Teachers = assignments.Count(a => a.Personnel.PersonnelType == "Teacher"),
-            Directors = assignments.Count(a => a.Personnel.PersonnelType == "Director"),
-            Staff = assignments.Count(a => a.Personnel.PersonnelType == "Staff"),
+            Teachers = assignments.Count(a => a.Personnel.PersonnelTypeNav?.Code == "Teacher"),
+            Directors = assignments.Count(a => a.Personnel.PersonnelTypeNav?.Code == "Director"),
+            Staff = assignments.Count(a => a.Personnel.PersonnelTypeNav?.Code == "Staff"),
             ByPosition = assignments
                 .Where(a => a.Position != null)
                 .GroupBy(a => a.Position!)
@@ -272,7 +286,9 @@ public class PersonnelListItemDto
     public string? TitlePrefix { get; set; }
     public string FirstName { get; set; } = "";
     public string LastName { get; set; } = "";
-    public string PersonnelType { get; set; } = "";
+    public int PersonnelTypeId { get; set; }
+    public string PersonnelTypeCode { get; set; } = "";
+    public string PersonnelTypeNameTh { get; set; } = "";
     public char Gender { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
@@ -285,18 +301,20 @@ public class PersonnelListItemDto
 
 public record CreatePersonnelRequest(
     string PersonnelCode, string FirstName, string LastName,
-    string PersonnelType, char Gender,
+    int PersonnelTypeId, char Gender,
     int? TitlePrefixId = null, string? IdCard = null,
     DateOnly? BirthDate = null, string? Phone = null,
     string? Email = null, string? LineId = null,
     int? SchoolId = null, string? Position = null,
-    string? AcademicRank = null
+    string? AcademicRank = null,
+    int? SubjectAreaId = null, int? SpecialtyId = null
 );
 
 public record UpdatePersonnelRequest(
     string? FirstName = null, string? LastName = null,
     int? TitlePrefixId = null, string? Phone = null,
     string? Email = null, string? LineId = null,
-    string? PersonnelType = null
+    int? PersonnelTypeId = null,
+    int? SubjectAreaId = null, int? SpecialtyId = null
 );
 // Gateway v1775015381
