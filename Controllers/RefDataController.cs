@@ -143,7 +143,7 @@ public class RefDataController : ControllerBase
     {
         const string cacheKey = "refdata:academic-standings";
         var cached = await _cache.GetAsync<List<AcademicStandingType>>(cacheKey);
-        if (cached != null)
+        if (cached is { Count: > 0 })
             return Ok(cached);
 
         var data = await _context.AcademicStandingTypes.AsNoTracking()

@@ -292,6 +292,8 @@ using (var scope = app.Services.CreateScope())
             ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AcademicStandingTypes_Code"" ON ""AcademicStandingTypes"" (""Code"");
+        -- Fix rows seeded before IsActive default was applied
+        UPDATE ""AcademicStandingTypes"" SET ""IsActive"" = TRUE WHERE ""IsActive"" = FALSE;
 
         -- EducationLevels table (ระดับวุฒิการศึกษา)
         CREATE TABLE IF NOT EXISTS ""EducationLevels"" (
