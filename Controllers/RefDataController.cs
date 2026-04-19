@@ -147,7 +147,6 @@ public class RefDataController : ControllerBase
             return Ok(cached);
 
         var data = await _context.AcademicStandingTypes.AsNoTracking()
-            .Where(a => a.IsActive)
             .OrderBy(a => a.Level)
             .ToListAsync();
         await _cache.SetAsync(cacheKey, data, _cacheExpiration);
