@@ -476,21 +476,21 @@ public static class SchoolSeedData
             Console.WriteLine($"[Seed] {positions.Length} position types created.");
         }
 
-        // ── Seed AcademicStandingTypes (วิทยฐานะ) ──
-        if (!await db.AcademicStandingTypes.AnyAsync())
-        {
-            var standings = new[]
-            {
-                new AcademicStandingType { Code = "none",          NameTh = "ยังไม่มีวิทยฐานะ",  Level = 0, IsActive = true },
-                new AcademicStandingType { Code = "proficient",    NameTh = "ชำนาญการ",         Level = 1, IsActive = true },
-                new AcademicStandingType { Code = "senior",        NameTh = "ชำนาญการพิเศษ",    Level = 2, IsActive = true },
-                new AcademicStandingType { Code = "expert",        NameTh = "เชี่ยวชาญ",        Level = 3, IsActive = true },
-                new AcademicStandingType { Code = "senior_expert", NameTh = "เชี่ยวชาญพิเศษ",   Level = 4, IsActive = true },
-            };
-            db.AcademicStandingTypes.AddRange(standings);
-            await db.SaveChangesAsync();
-            Console.WriteLine($"[Seed] {standings.Length} academic standing types created.");
-        }
+        // ── Seed AcademicStandingTypes (วิทยฐานะ) — UPSERT so IsActive is always correct ──
+        await db.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO ""AcademicStandingTypes"" (""Code"", ""NameTh"", ""Level"", ""IsActive"")
+            VALUES
+                ('none',          'ยังไม่มีวิทยฐานะ', 0, TRUE),
+                ('proficient',    'ชำนาญการ',         1, TRUE),
+                ('senior',        'ชำนาญการพิเศษ',    2, TRUE),
+                ('expert',        'เชี่ยวชาญ',        3, TRUE),
+                ('senior_expert', 'เชี่ยวชาญพิเศษ',   4, TRUE)
+            ON CONFLICT (""Code"") DO UPDATE
+                SET ""NameTh"" = EXCLUDED.""NameTh"",
+                    ""Level""  = EXCLUDED.""Level"",
+                    ""IsActive"" = TRUE;
+        ");
+        Console.WriteLine("[Seed] AcademicStandingTypes upserted.");
 
         // ── Seed EducationLevels (ระดับวุฒิการศึกษา) ──
         if (!await db.EducationLevels.AnyAsync())

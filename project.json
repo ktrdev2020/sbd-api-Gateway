@@ -34,6 +34,13 @@
         "command": "dotnet ef migrations add {args} --startup-project Gateway.csproj --output-dir Data/Migrations",
         "cwd": "apps/dotnet/Gateway"
       }
+    },
+    "db-seed": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet run --project Gateway.csproj -- --seed-only",
+        "cwd": "apps/dotnet/Gateway"
+      }
     }
   }
 }

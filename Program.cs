@@ -1163,12 +1163,6 @@ using (var scope = app.Services.CreateScope())
     // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels
     await Gateway.RefDataSeedData.SeedAsync(db);
 
-    // Fix AcademicStandingTypes rows with IsActive=false (caused by EF Core ignoring
-    // DB DEFAULT TRUE when inserting without explicit IsActive value).
-    await db.Database.ExecuteSqlRawAsync(
-        @"UPDATE ""AcademicStandingTypes"" SET ""IsActive"" = TRUE WHERE ""IsActive"" = FALSE");
-    Console.WriteLine("[Seed] AcademicStandingTypes IsActive fix applied.");
-
     // Invalidate refdata Redis cache keys so stale empty-array responses from
     // before this seed run are not served (safe to call every startup — TTL resets).
     try
@@ -1312,5 +1306,12 @@ app.MapControllers();
 // Health check / redirect root to swagger
 app.MapGet("/", () => Results.Redirect("/swagger"));
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+
+// --seed-only: run all seeds then exit (used by `npx nx run Gateway:db-seed`)
+if (args.Contains("--seed-only"))
+{
+    Console.WriteLine("[Seed] --seed-only mode: all seeds completed. Exiting.");
+    return;
+}
 
 app.Run();
