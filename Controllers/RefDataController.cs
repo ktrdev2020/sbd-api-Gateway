@@ -224,6 +224,37 @@ public class RefDataController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("salary-levels")]
+    public async Task<ActionResult> GetSalaryLevels([FromQuery] string? category)
+    {
+        const string cacheKey = "refdata:salary-levels";
+        var cached = await _cache.GetAsync<List<SalaryLevelDto>>(cacheKey);
+        if (cached is { Count: > 0 })
+        {
+            var filtered = string.IsNullOrEmpty(category)
+                ? cached.Where(s => s.IsActive)
+                : cached.Where(s => s.IsActive && s.Category == category);
+            return Ok(filtered.OrderBy(s => s.SortOrder));
+        }
+
+        var data = await _context.SalaryLevels.AsNoTracking()
+            .Where(s => s.IsActive)
+            .OrderBy(s => s.SortOrder)
+            .Select(s => new SalaryLevelDto
+            {
+                Id = s.Id, Code = s.Code, NameTh = s.NameTh, NameEn = s.NameEn,
+                Category = s.Category, MinSalary = s.MinSalary, MaxSalary = s.MaxSalary,
+                SortOrder = s.SortOrder, IsActive = s.IsActive,
+            })
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+
+        var result = string.IsNullOrEmpty(category)
+            ? data
+            : data.Where(s => s.Category == category).ToList();
+        return Ok(result);
+    }
+
     [HttpGet("subject-areas")]
     public async Task<ActionResult> GetSubjectAreas()
     {
@@ -253,6 +284,20 @@ public class PersonnelTypeDto
     public string  PositionCategory { get; set; } = "";
     public int     SortOrder        { get; set; }
     public bool    IsActive         { get; set; }
+}
+
+/// <summary>Projection for SalaryLevel — อันดับเงินเดือน dropdown source.</summary>
+public class SalaryLevelDto
+{
+    public int      Id         { get; set; }
+    public string   Code       { get; set; } = "";
+    public string   NameTh     { get; set; } = "";
+    public string?  NameEn     { get; set; }
+    public string   Category   { get; set; } = "";
+    public decimal? MinSalary  { get; set; }
+    public decimal? MaxSalary  { get; set; }
+    public int      SortOrder  { get; set; }
+    public bool     IsActive   { get; set; }
 }
 
 /// <summary>Projection for EducationLevel — excludes navigation properties.</summary>

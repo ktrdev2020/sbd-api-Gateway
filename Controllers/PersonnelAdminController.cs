@@ -193,6 +193,10 @@ public class PersonnelAdminController(
             .Include(p => p.AcademicStandingType)
             .Include(p => p.SchoolAssignments)
                 .ThenInclude(sa => sa.School)
+            .Include(p => p.SchoolAssignments)
+                .ThenInclude(sa => sa.PositionTypeNav)
+            .Include(p => p.SchoolAssignments)
+                .ThenInclude(sa => sa.AcademicStandingTypeNav)
             .Where(p => p.AffiliationStatus != "trashed")
             .AsQueryable();
 
@@ -237,14 +241,21 @@ public class PersonnelAdminController(
                 p.FirstName,
                 p.LastName,
                 PositionType  = p.PositionType != null ? p.PositionType.NameTh : null,
-                // Compound text: assignment value → position+standing → suffix only
-                AcademicRank  = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.AcademicRank).FirstOrDefault()
+                // Compound text: resolve from FK nav first, fall back to text, then Personnel standing
+                AcademicRank  = p.SchoolAssignments.Where(sa => sa.IsPrimary)
+                    .Select(sa => sa.AcademicStandingTypeId != null
+                        ? (sa.PositionTypeNav != null ? sa.PositionTypeNav.NameTh : "")
+                            + sa.AcademicStandingTypeNav!.NameTh
+                        : sa.AcademicRank)
+                    .FirstOrDefault()
                              ?? (p.AcademicStandingType != null && p.AcademicStandingType.Code != "none"
                                  ? (p.PositionType != null
                                      ? p.PositionType.NameTh + p.AcademicStandingType.NameTh
                                      : p.AcademicStandingType.NameTh)
                                  : null),
-                SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.SalaryLevel).FirstOrDefault(),
+                SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary)
+                    .Select(sa => sa.SalaryLevelId != null ? sa.SalaryLevelNav!.NameTh : sa.SalaryLevel)
+                    .FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
                     .Select(sa => new { sa.SchoolId, NameTh = sa.School.NameTh, sa.SpecialRoleType })
@@ -426,6 +437,9 @@ public class PersonnelAdminController(
             .Include(x => x.PositionType)
             .Include(x => x.AcademicStandingType)
             .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.School)
+            .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.SalaryLevelNav)
+            .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.PositionTypeNav)
+            .Include(x => x.SchoolAssignments).ThenInclude(sa => sa.AcademicStandingTypeNav)
             .Include(x => x.Educations).ThenInclude(e => e.EducationLevel)
             .Include(x => x.Certifications)
             .Include(x => x.User)
@@ -467,15 +481,18 @@ public class PersonnelAdminController(
             p.LastName,
             PositionType     = p.PositionType?.NameTh,
             PositionTypeId   = p.PositionTypeId,
-            // AcademicRank priority: assignment compound text → build from position+standing → suffix only
-            AcademicRank = primarySa?.AcademicRank
+            // AcademicRank priority: resolve from FK nav → fall back to text → Personnel standing
+            AcademicRank = primarySa?.AcademicStandingTypeNav != null
+                ? $"{primarySa.PositionTypeNav?.NameTh ?? p.PositionType?.NameTh}{primarySa.AcademicStandingTypeNav.NameTh}"
+                : primarySa?.AcademicRank
                 ?? (p.AcademicStandingType != null && p.AcademicStandingType.Code != "none"
                     ? (p.PositionType != null
                         ? $"{p.PositionType.NameTh}{p.AcademicStandingType.NameTh}"
                         : p.AcademicStandingType.NameTh)
                     : null),
-            AcademicRankId   = p.AcademicStandingTypeId,
-            SalaryLevel      = primarySa?.SalaryLevel,
+            AcademicRankId   = primarySa?.AcademicStandingTypeId ?? p.AcademicStandingTypeId,
+            SalaryLevelId    = primarySa?.SalaryLevelId,
+            SalaryLevel      = primarySa?.SalaryLevelNav?.NameTh ?? primarySa?.SalaryLevel,
             PrimarySchool = primarySa is null ? null : new
             {
                 primarySa.SchoolId,
@@ -487,9 +504,14 @@ public class PersonnelAdminController(
                 sa.Id,
                 sa.SchoolId,
                 SchoolName = sa.School.NameTh,
-                sa.Position,
-                sa.AcademicRank,
-                sa.SalaryLevel,
+                PositionTypeId = sa.PositionTypeId,
+                Position = sa.PositionTypeNav?.NameTh ?? sa.Position,
+                AcademicStandingTypeId = sa.AcademicStandingTypeId,
+                AcademicRank = sa.AcademicStandingTypeNav != null
+                    ? $"{sa.PositionTypeNav?.NameTh}{sa.AcademicStandingTypeNav.NameTh}"
+                    : sa.AcademicRank,
+                sa.SalaryLevelId,
+                SalaryLevel = sa.SalaryLevelNav?.NameTh ?? sa.SalaryLevel,
                 sa.IsPrimary,
                 AssignedAt  = sa.StartDate,
                 sa.EndDate,
@@ -684,6 +706,7 @@ public class PersonnelAdminController(
             IsPrimary       = true,
             Position        = req.PositionType,
             AcademicRank    = req.AcademicRank,
+            SalaryLevelId   = req.SalaryLevelId,
             SalaryLevel     = req.SalaryLevel,
             SpecialRoleType = req.SpecialRoleType ?? "none",
             StartDate       = DateOnly.TryParse(req.StartDate, out var sd) ? sd : DateOnly.FromDateTime(DateTime.Today),
@@ -770,11 +793,15 @@ public class PersonnelAdminController(
                 .FirstOrDefaultAsync(ct) ?? p.PersonnelTypeId;
         }
 
-        // Resolve AcademicStandingTypeId from submitted compound academicRank text.
-        // The compound text is "<PositionNameTh><Suffix>" e.g. "ครูชำนาญการพิเศษ".
-        // We match the LONGEST suffix in AcademicStandingTypes (e.g. "ชำนาญการพิเศษ" before "ชำนาญการ").
-        if (!string.IsNullOrWhiteSpace(req.AcademicRank))
+        // Resolve AcademicStandingTypeId: prefer direct FK, fall back to longest-suffix text match.
+        if (req.AcademicStandingTypeId.HasValue)
         {
+            newAcademicStandingId = req.AcademicStandingTypeId;
+        }
+        else if (!string.IsNullOrWhiteSpace(req.AcademicRank))
+        {
+            // The compound text is "<PositionNameTh><Suffix>" e.g. "ครูชำนาญการพิเศษ".
+            // We match the LONGEST suffix in AcademicStandingTypes (e.g. "ชำนาญการพิเศษ" before "ชำนาญการ").
             var standings = await db.AcademicStandingTypes.AsNoTracking()
                 .Where(s => s.Code != "none")
                 .OrderByDescending(s => s.NameTh.Length)
@@ -819,19 +846,24 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.UpdatedAt,        now)
                 .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
-        // Update school assignment: AcademicRank, SalaryLevel, SpecialRoleType, Position.
-        // Try primary assignment first; fall back to any assignment (handles IsPrimary sync edge cases).
+        // Update school assignment using ExecuteUpdateAsync (direct SQL — bypasses EF change detection).
+        // Try primary assignment first; fall back to any assignment.
         var assignment = await db.PersonnelSchoolAssignments
-            .FirstOrDefaultAsync(a => a.PersonnelId == id && a.IsPrimary, ct)
+            .AsNoTracking()
+            .Where(a => a.PersonnelId == id && a.IsPrimary)
+            .Select(a => new { a.Id, a.AcademicRank, a.AcademicStandingTypeId, a.SalaryLevelId, a.SalaryLevel, a.SpecialRoleType, a.Position, a.PositionTypeId })
+            .FirstOrDefaultAsync(ct)
             ?? await db.PersonnelSchoolAssignments
+                .AsNoTracking()
+                .Where(a => a.PersonnelId == id)
                 .OrderByDescending(a => a.Id)
-                .FirstOrDefaultAsync(a => a.PersonnelId == id, ct);
+                .Select(a => new { a.Id, a.AcademicRank, a.AcademicStandingTypeId, a.SalaryLevelId, a.SalaryLevel, a.SpecialRoleType, a.Position, a.PositionTypeId })
+                .FirstOrDefaultAsync(ct);
+
         if (assignment != null)
         {
-            if (req.AcademicRank    != null) assignment.AcademicRank    = req.AcademicRank;
-            if (req.SalaryLevel     != null) assignment.SalaryLevel     = req.SalaryLevel;
-            if (req.SpecialRoleType != null) assignment.SpecialRoleType = req.SpecialRoleType;
-            // Sync Position text when PositionType changed (resolve name from FK)
+            // Resolve new position text (if PositionType changed)
+            string? resolvedPosition = assignment.Position;
             if (req.PositionTypeId.HasValue || !string.IsNullOrWhiteSpace(req.PositionType))
             {
                 if (newPositionTypeId.HasValue)
@@ -841,14 +873,30 @@ public class PersonnelAdminController(
                         .Select(pt => pt.NameTh)
                         .FirstOrDefaultAsync(ct);
                     if (!string.IsNullOrWhiteSpace(positionName))
-                        assignment.Position = positionName;
+                        resolvedPosition = positionName;
                 }
                 else if (!string.IsNullOrWhiteSpace(req.PositionType))
-                {
-                    assignment.Position = req.PositionType;
-                }
+                    resolvedPosition = req.PositionType;
             }
-            await db.SaveChangesAsync(ct);
+
+            // Resolve salary fields: FK preferred, text fallback, else keep existing
+            int?    newSalaryLevelId = req.SalaryLevelId.HasValue ? req.SalaryLevelId : assignment.SalaryLevelId;
+            string? newSalaryLevel   = req.SalaryLevelId.HasValue ? null
+                                     : req.SalaryLevel   != null  ? req.SalaryLevel
+                                     : assignment.SalaryLevel;
+
+            var assignmentId = assignment.Id;
+            await db.PersonnelSchoolAssignments
+                .Where(a => a.Id == assignmentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.PositionTypeId,        newPositionTypeId)
+                    .SetProperty(x => x.AcademicStandingTypeId, newAcademicStandingId)
+                    .SetProperty(x => x.AcademicRank,   req.AcademicRank    ?? assignment.AcademicRank)
+                    .SetProperty(x => x.SalaryLevelId,  newSalaryLevelId)
+                    .SetProperty(x => x.SalaryLevel,    newSalaryLevel)
+                    .SetProperty(x => x.SpecialRoleType, req.SpecialRoleType ?? assignment.SpecialRoleType)
+                    .SetProperty(x => x.Position,       resolvedPosition),
+                    ct);
         }
 
         await cache.RemoveAsync(DetailKey(id));
@@ -941,6 +989,7 @@ public class PersonnelAdminController(
             IsPrimary       = true,
             Position        = req.Position,
             AcademicRank    = req.AcademicRank,
+            SalaryLevelId   = req.SalaryLevelId,
             SalaryLevel     = req.SalaryLevel,
             SpecialRoleType = req.SpecialRoleType ?? "none",
             StartDate       = DateOnly.FromDateTime(DateTime.Today),
@@ -1454,7 +1503,8 @@ public class PersonnelAdminCreateRequest
     public int?     PositionTypeId   { get; set; }  // direct FK — preferred
     public string?  PositionType     { get; set; }  // plain text fallback e.g. "ครูผู้ช่วย"
     public string?  AcademicRank     { get; set; }  // วิทยฐานะ plain text
-    public string?  SalaryLevel      { get; set; }
+    public int?     SalaryLevelId    { get; set; }  // FK → SalaryLevels — preferred
+    public string?  SalaryLevel      { get; set; }  // plain text fallback (legacy)
     public int?     SchoolId         { get; set; }
     public string?  SpecialRoleType  { get; set; }  // none|acting_director|deputy_director
     public string?  StartDate        { get; set; }  // ISO date
@@ -1477,11 +1527,13 @@ public class PersonnelAdminUpdateRequest
     public string?  Telegram         { get; set; }
     public string?  SubjectArea      { get; set; }
     public string?  Specialty        { get; set; }
-    public int?     PositionTypeId   { get; set; }  // direct FK — preferred
-    public string?  PositionType     { get; set; }  // plain text fallback
-    public string?  AcademicRank     { get; set; }
-    public string?  SalaryLevel      { get; set; }
-    public string?  SpecialRoleType  { get; set; }
+    public int?     PositionTypeId          { get; set; }  // direct FK — preferred
+    public string?  PositionType            { get; set; }  // plain text fallback
+    public int?     AcademicStandingTypeId  { get; set; }  // FK → AcademicStandingTypes — preferred over AcademicRank text
+    public string?  AcademicRank            { get; set; }  // compound text fallback (legacy)
+    public int?     SalaryLevelId           { get; set; }  // FK → SalaryLevels — preferred
+    public string?  SalaryLevel             { get; set; }  // plain text fallback (legacy)
+    public string?  SpecialRoleType         { get; set; }
 }
 
 public class PersonnelEducationUpsertRequest
@@ -1497,6 +1549,7 @@ public record AssignToSchoolRequest(
     int       SchoolId,
     string?   Position,
     string?   AcademicRank,
+    int?      SalaryLevelId,
     string?   SalaryLevel,
     string?   SpecialRoleType);
 

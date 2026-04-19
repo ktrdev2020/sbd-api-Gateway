@@ -1160,7 +1160,140 @@ using (var scope = app.Services.CreateScope())
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SubjectAreas_Code"" ON ""SubjectAreas"" (""Code"");
     ");
 
-    // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels
+    // ── SalaryLevels table (อันดับเงินเดือน) ────────────────────────────────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""SalaryLevels"" (
+            ""Id""         SERIAL PRIMARY KEY,
+            ""Code""       TEXT NOT NULL,
+            ""NameTh""     TEXT NOT NULL,
+            ""NameEn""     TEXT,
+            ""Category""   TEXT NOT NULL DEFAULT '',
+            ""MinSalary""  NUMERIC(10,2),
+            ""MaxSalary""  NUMERIC(10,2),
+            ""SortOrder""  INTEGER NOT NULL DEFAULT 0,
+            ""IsActive""   BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SalaryLevels_Code"" ON ""SalaryLevels"" (""Code"");
+    ");
+
+    // ── SalaryLevelId FK on PersonnelSchoolAssignments ───────────────────────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        ALTER TABLE ""PersonnelSchoolAssignments""
+            ADD COLUMN IF NOT EXISTS ""SalaryLevelId"" INTEGER REFERENCES ""SalaryLevels""(""Id"") ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelSchoolAssignments_SalaryLevelId""
+            ON ""PersonnelSchoolAssignments"" (""SalaryLevelId"") WHERE ""SalaryLevelId"" IS NOT NULL;
+    ");
+
+    // ── Backfill SalaryLevelId from SalaryLevel text (one-time, idempotent) ───────
+    // Old form stored lvl.nameTh directly (e.g. ""คศ.3 (ชำนาญการพิเศษ)"").
+    // SalaryLevels.NameTh matches exactly → direct join backfills all legacy rows.
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""PersonnelSchoolAssignments"" psa
+        SET ""SalaryLevelId"" = sl.""Id""
+        FROM ""SalaryLevels"" sl
+        WHERE psa.""SalaryLevelId"" IS NULL
+          AND psa.""SalaryLevel""  IS NOT NULL
+          AND psa.""SalaryLevel""   = sl.""NameTh"";
+    ");
+    Console.WriteLine("[Migration] SalaryLevelId backfilled from SalaryLevel text.");
+
+    // ── PositionTypeId + AcademicStandingTypeId FKs on PersonnelSchoolAssignments ──
+    await db.Database.ExecuteSqlRawAsync(@"
+        ALTER TABLE ""PersonnelSchoolAssignments""
+            ADD COLUMN IF NOT EXISTS ""PositionTypeId"" INTEGER REFERENCES ""PositionTypes""(""Id"") ON DELETE SET NULL;
+        ALTER TABLE ""PersonnelSchoolAssignments""
+            ADD COLUMN IF NOT EXISTS ""AcademicStandingTypeId"" INTEGER REFERENCES ""AcademicStandingTypes""(""Id"") ON DELETE SET NULL;
+
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelSchoolAssignments_PositionTypeId""
+            ON ""PersonnelSchoolAssignments"" (""PositionTypeId"") WHERE ""PositionTypeId"" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelSchoolAssignments_AcademicStandingTypeId""
+            ON ""PersonnelSchoolAssignments"" (""AcademicStandingTypeId"") WHERE ""AcademicStandingTypeId"" IS NOT NULL;
+    ");
+
+    // ── Backfill PositionTypeId from Position text (exact NameTh match) ──────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""PersonnelSchoolAssignments"" psa
+        SET ""PositionTypeId"" = pt.""Id""
+        FROM ""PositionTypes"" pt
+        WHERE psa.""PositionTypeId"" IS NULL
+          AND psa.""Position"" IS NOT NULL
+          AND psa.""Position"" = pt.""NameTh"";
+    ");
+
+    // ── Backfill PositionTypeId from Personnel.PositionTypeId if still null ────
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""PersonnelSchoolAssignments"" psa
+        SET ""PositionTypeId"" = p.""PositionTypeId""
+        FROM ""Personnel"" p
+        WHERE psa.""PersonnelId"" = p.""Id""
+          AND psa.""PositionTypeId"" IS NULL
+          AND p.""PositionTypeId"" IS NOT NULL;
+    ");
+
+    // ── Backfill AcademicStandingTypeId from AcademicRank text (longest suffix) ─
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""PersonnelSchoolAssignments"" psa
+        SET ""AcademicStandingTypeId"" = (
+            SELECT ast.""Id""
+            FROM ""AcademicStandingTypes"" ast
+            WHERE ast.""Code"" <> 'none'
+              AND psa.""AcademicRank"" LIKE '%' || ast.""NameTh""
+            ORDER BY length(ast.""NameTh"") DESC
+            LIMIT 1
+        )
+        WHERE psa.""AcademicStandingTypeId"" IS NULL
+          AND psa.""AcademicRank"" IS NOT NULL;
+    ");
+
+    // ── Backfill AcademicStandingTypeId from Personnel if still null ──────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""PersonnelSchoolAssignments"" psa
+        SET ""AcademicStandingTypeId"" = p.""AcademicStandingTypeId""
+        FROM ""Personnel"" p
+        WHERE psa.""PersonnelId"" = p.""Id""
+          AND psa.""AcademicStandingTypeId"" IS NULL
+          AND p.""AcademicStandingTypeId"" IS NOT NULL
+          AND p.""AcademicStandingTypeId"" <> (
+              SELECT ast2.""Id"" FROM ""AcademicStandingTypes"" ast2 WHERE ast2.""Code"" = 'none' LIMIT 1
+          );
+    ");
+    Console.WriteLine("[Migration] PositionTypeId + AcademicStandingTypeId backfilled on PersonnelSchoolAssignments.");
+
+    // ── PositionType cleanup — remove embedded-rank names, fix deputy_dir ─────
+    // Old seed had "ครู คศ.2 ชำนาญการ" etc. — now rank is handled by AcademicStandingTypes.
+    // Migration: add single "ครู" entry, deactivate teacher_kc1..5, fix deputy/acting names.
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- Fix director deputy/acting names (idempotent)
+        UPDATE ""PositionTypes"" SET ""NameTh""='รองผู้อำนวยการสถานศึกษา'     WHERE ""Code""='deputy_dir' AND ""NameTh""='รองผู้อำนวยการ';
+        UPDATE ""PositionTypes"" SET ""NameTh""='รักษาการผู้อำนวยการสถานศึกษา' WHERE ""Code""='acting_dir' AND ""NameTh""='รักษาการผู้อำนวยการ';
+
+        -- Re-point Personnel from embedded-rank entries → first clean ""ครู"" record (if teacher_kc* exists)
+        UPDATE ""Personnel""
+        SET ""PositionTypeId"" = (
+            SELECT ""Id"" FROM ""PositionTypes""
+            WHERE ""NameTh""='ครู' AND ""Category""='ครู' AND ""IsActive""=true
+            ORDER BY ""SortOrder"" LIMIT 1
+        )
+        WHERE ""PositionTypeId"" IN (
+            SELECT ""Id"" FROM ""PositionTypes""
+            WHERE ""Code"" IN ('teacher_kc1','teacher_kc2','teacher_kc3','teacher_kc4','teacher_kc5')
+        );
+
+        -- Deactivate embedded-rank entries if they exist (keep for audit trail)
+        UPDATE ""PositionTypes"" SET ""IsActive""=false
+        WHERE ""Code"" IN ('teacher_kc1','teacher_kc2','teacher_kc3','teacher_kc4','teacher_kc5');
+
+        -- Deactivate 'teacher' placeholder if a canonical ""ครู"" already exists with another code
+        UPDATE ""PositionTypes"" SET ""IsActive""=false
+        WHERE ""Code""='teacher'
+        AND EXISTS (
+            SELECT 1 FROM ""PositionTypes""
+            WHERE ""Code""!='teacher' AND ""NameTh""='ครู' AND ""Category""='ครู' AND ""IsActive""=true
+        );
+    ");
+    Console.WriteLine("[Migration] PositionTypes cleaned up — embedded-rank entries deactivated.");
+
+    // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels + SalaryLevels
     await Gateway.RefDataSeedData.SeedAsync(db);
 
     // Invalidate refdata Redis cache keys so stale empty-array responses from
@@ -1178,6 +1311,7 @@ using (var scope = app.Services.CreateScope())
             "refdata:title-prefixes",
             "refdata:position-types",
             "refdata:academic-standings",
+            "refdata:salary-levels",
         });
         Console.WriteLine("[Seed] RefData Redis caches invalidated.");
     }

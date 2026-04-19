@@ -16,6 +16,7 @@ public static class RefDataSeedData
         await SeedEducationLevelsAsync(db);
         await SeedSubjectAreasAsync(db);
         await SeedSpecialtiesAsync(db);
+        await SeedSalaryLevelsAsync(db);
     }
 
     // ── ประเภทบุคลากร ─────────────────────────────────────────────────────────────
@@ -170,5 +171,47 @@ public static class RefDataSeedData
             }
         }
         await db.SaveChangesAsync();
+    }
+
+    // ── อันดับเงินเดือน ──────────────────────────────────────────────────────────
+    // อ้างอิง: บัญชีเงินเดือนข้าราชการครูและบุคลากรทางการศึกษา (ปรับฐาน 2567)
+    // ว10/2564 PA guidelines — คศ.2 (ชำนาญการ) ถึง คศ.5 (เชี่ยวชาญพิเศษ)
+    private static async Task SeedSalaryLevelsAsync(SbdDbContext db)
+    {
+        var seed = new (string Code, string NameTh, string? NameEn, string Category, decimal? Min, decimal? Max, int Sort)[]
+        {
+            // ข้าราชการครูและบุคลากรทางการศึกษา (civil_servant)
+            ("cs_asst", "คส. (ครูผู้ช่วย)",      "Assistant Teacher",       "civil_servant",  9_900m,  16_640m,  1),
+            ("cs1",     "คศ.1",                   "Teacher Grade 1",         "civil_servant", 12_530m,  36_020m,  2),
+            ("cs2",     "คศ.2 (ชำนาญการ)",        "Teacher Grade 2",         "civil_servant", 16_190m,  41_620m,  3),
+            ("cs3",     "คศ.3 (ชำนาญการพิเศษ)",   "Teacher Grade 3",         "civil_servant", 19_860m,  58_390m,  4),
+            ("cs4",     "คศ.4 (เชี่ยวชาญ)",       "Teacher Grade 4",         "civil_servant", 24_400m,  69_040m,  5),
+            ("cs5",     "คศ.5 (เชี่ยวชาญพิเศษ)", "Teacher Grade 5",         "civil_servant", 29_980m,  76_800m,  6),
+
+            // พนักงานราชการ (gov_employee) — กลุ่มงานตาม กพ.
+            ("gov_a",   "กลุ่มงาน ก (บริหารทั่วไป)",   "Group A",    "gov_employee", 13_800m, null, 10),
+            ("gov_b",   "กลุ่มงาน ข (วิชาชีพ)",        "Group B",    "gov_employee", 18_000m, null, 11),
+            ("gov_c",   "กลุ่มงาน ค (เชี่ยวชาญเฉพาะ)", "Group C",   "gov_employee", 21_000m, null, 12),
+            ("gov_d",   "กลุ่มงาน ง (บริการ)",          "Group D",   "gov_employee", 11_280m, null, 13),
+
+            // ลูกจ้างประจำ / ชั่วคราว (other)
+            ("other",   "กำหนดเอง",                     "Custom",    "other",        null,    null, 20),
+        };
+
+        var existing = await db.SalaryLevels.Select(s => s.Code).ToHashSetAsync();
+        foreach (var (code, nameTh, nameEn, category, min, max, sort) in seed)
+        {
+            if (!existing.Contains(code))
+            {
+                db.SalaryLevels.Add(new SalaryLevel
+                {
+                    Code = code, NameTh = nameTh, NameEn = nameEn,
+                    Category = category, MinSalary = min, MaxSalary = max,
+                    SortOrder = sort, IsActive = true,
+                });
+            }
+        }
+        await db.SaveChangesAsync();
+        Console.WriteLine("[Seed] SalaryLevels upserted.");
     }
 }
