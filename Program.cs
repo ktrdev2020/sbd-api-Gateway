@@ -1163,6 +1163,12 @@ using (var scope = app.Services.CreateScope())
     // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels
     await Gateway.RefDataSeedData.SeedAsync(db);
 
+    // Fix AcademicStandingTypes rows with IsActive=false (caused by EF Core ignoring
+    // DB DEFAULT TRUE when inserting without explicit IsActive value).
+    await db.Database.ExecuteSqlRawAsync(
+        @"UPDATE ""AcademicStandingTypes"" SET ""IsActive"" = TRUE WHERE ""IsActive"" = FALSE");
+    Console.WriteLine("[Seed] AcademicStandingTypes IsActive fix applied.");
+
     // Invalidate refdata Redis cache keys so stale empty-array responses from
     // before this seed run are not served (safe to call every startup — TTL resets).
     try
@@ -1177,6 +1183,7 @@ using (var scope = app.Services.CreateScope())
             "refdata:subject-areas",
             "refdata:title-prefixes",
             "refdata:position-types",
+            "refdata:academic-standings",
         });
         Console.WriteLine("[Seed] RefData Redis caches invalidated.");
     }
