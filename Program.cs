@@ -1293,8 +1293,50 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] PositionTypes cleaned up — embedded-rank entries deactivated.");
 
+    // ── SubjectAreaId + SpecialtyId FK columns on Personnel ─────────────────────
+    // Personnel entity was updated to use int FKs (SubjectAreaId → SubjectAreas,
+    // SpecialtyId → Specialties). The old text columns (SubjectArea/Specialty) remain
+    // for backwards compat; new int FK columns are added here idempotently.
+    await db.Database.ExecuteSqlRawAsync(@"
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""SubjectAreaId"" INTEGER NULL;
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""SpecialtyId""   INTEGER NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Personnel_SubjectAreaId""
+            ON ""Personnel"" (""SubjectAreaId"") WHERE ""SubjectAreaId"" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_Personnel_SpecialtyId""
+            ON ""Personnel"" (""SpecialtyId"") WHERE ""SpecialtyId"" IS NOT NULL;
+        DO $$ BEGIN
+            ALTER TABLE ""Personnel""
+                ADD CONSTRAINT ""FK_Personnel_SubjectAreas_SubjectAreaId""
+                FOREIGN KEY (""SubjectAreaId"") REFERENCES ""SubjectAreas""(""Id"") ON DELETE SET NULL;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN
+            ALTER TABLE ""Personnel""
+                ADD CONSTRAINT ""FK_Personnel_Specialties_SpecialtyId""
+                FOREIGN KEY (""SpecialtyId"") REFERENCES ""Specialties""(""Id"") ON DELETE SET NULL;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    ");
+    Console.WriteLine("[Migration] SubjectAreaId + SpecialtyId FK columns added to Personnel.");
+
     // Seed reference lookup tables: Specialties + SubjectAreas + EducationLevels + SalaryLevels
     await Gateway.RefDataSeedData.SeedAsync(db);
+
+    // ── Backfill SubjectAreaId / SpecialtyId from old text columns ───────────────
+    await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE ""Personnel"" p
+        SET ""SubjectAreaId"" = sa.""Id""
+        FROM ""SubjectAreas"" sa
+        WHERE p.""SubjectAreaId"" IS NULL
+          AND p.""SubjectArea""  IS NOT NULL
+          AND p.""SubjectArea""   = sa.""NameTh"";
+
+        UPDATE ""Personnel"" p
+        SET ""SpecialtyId"" = sp.""Id""
+        FROM ""Specialties"" sp
+        WHERE p.""SpecialtyId"" IS NULL
+          AND p.""Specialty""   IS NOT NULL
+          AND p.""Specialty""    = sp.""NameTh"";
+    ");
+    Console.WriteLine("[Migration] SubjectAreaId + SpecialtyId backfilled from text columns.");
 
     // Invalidate refdata Redis cache keys so stale empty-array responses from
     // before this seed run are not served (safe to call every startup — TTL resets).
