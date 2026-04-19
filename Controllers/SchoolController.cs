@@ -88,7 +88,7 @@ public class SchoolController : ControllerBase
                 s.Phone,
                 s.Address != null && s.Address.SubDistrict != null ? s.Address.SubDistrict.NameTh : null,
                 s.Address != null && s.Address.SubDistrict != null && s.Address.SubDistrict.District != null ? s.Address.SubDistrict.District.NameTh : null,
-                s.SchoolLevel,
+                s.SchoolLevelNav != null ? s.SchoolLevelNav.NameTh : null,
                 s.SchoolType,
                 s.IsActive,
                 s.StudentCount,
@@ -141,12 +141,11 @@ public class SchoolController : ControllerBase
             AreaTypeId = request.AreaTypeId,
             SchoolCluster = request.SchoolCluster,
             Phone = request.Phone,
-            Phone2 = request.Phone2,
             Email = request.Email,
             Website = request.Website,
             TaxId = request.TaxId,
             SchoolType = request.SchoolType,
-            SchoolLevel = request.SchoolLevel,
+            SchoolLevelId = request.SchoolLevelId,
             Principal = request.Principal,
             EstablishedDate = request.EstablishedDate,
             Latitude = request.Latitude,
@@ -187,12 +186,11 @@ public class SchoolController : ControllerBase
         school.AreaTypeId = request.AreaTypeId;
         school.SchoolCluster = request.SchoolCluster;
         school.Phone = request.Phone;
-        school.Phone2 = request.Phone2;
         school.Email = request.Email;
         school.Website = request.Website;
         school.TaxId = request.TaxId;
         school.SchoolType = request.SchoolType;
-        school.SchoolLevel = request.SchoolLevel;
+        school.SchoolLevelId = request.SchoolLevelId;
         school.Principal = request.Principal;
         school.EstablishedDate = request.EstablishedDate;
         school.Latitude = request.Latitude;
@@ -267,7 +265,7 @@ public class SchoolController : ControllerBase
                 s.Address != null && s.Address.SubDistrict != null && s.Address.SubDistrict.District != null
                     ? s.Address.SubDistrict.District.NameTh
                     : null,
-                s.SchoolLevel,
+                s.SchoolLevelNav != null ? s.SchoolLevelNav.NameTh : null,
                 s.StudentCount,
                 s.TeacherCount,
                 s.DeletedAt!.Value,
@@ -343,7 +341,6 @@ public class SchoolController : ControllerBase
             return NotFound(new { message = "School not found" });
 
         school.Phone = request.Phone;
-        school.Phone2 = request.Phone2;
         school.Email = request.Email;
         school.Website = request.Website;
         school.Principal = request.Principal;
@@ -364,14 +361,14 @@ public class SchoolController : ControllerBase
     {
         var personnel = await _context.Set<PersonnelSchoolAssignment>()
             .Where(psa => psa.SchoolId == id)
-            .OrderBy(psa => psa.Personnel.PersonnelType)
+            .OrderBy(psa => psa.Personnel.PersonnelTypeNav.Code)
             .ThenBy(psa => psa.Personnel.FirstName)
             .Select(psa => new SchoolPersonnelItemDto(
                 psa.Personnel.Id,
                 psa.Personnel.TitlePrefix != null ? psa.Personnel.TitlePrefix.NameTh : null,
                 psa.Personnel.FirstName,
                 psa.Personnel.LastName,
-                psa.Personnel.PersonnelType,
+                psa.Personnel.PersonnelTypeNav.Code,
                 psa.Position ?? (psa.Personnel.PositionType != null ? psa.Personnel.PositionType.NameTh : null),
                 psa.IsPrimary
             ))
@@ -411,7 +408,7 @@ public class SchoolController : ControllerBase
                 s.Phone,
                 s.Address != null && s.Address.SubDistrict != null ? s.Address.SubDistrict.NameTh : null,
                 s.Address != null && s.Address.SubDistrict != null && s.Address.SubDistrict.District != null ? s.Address.SubDistrict.District.NameTh : null,
-                s.SchoolLevel,
+                s.SchoolLevelNav != null ? s.SchoolLevelNav.NameTh : null,
                 s.SchoolType,
                 s.IsActive,
                 s.StudentCount,
@@ -486,7 +483,6 @@ public class SchoolController : ControllerBase
             AreaTypeId = s.AreaTypeId,
             SchoolCluster = s.SchoolCluster,
             Phone = s.Phone,
-            Phone2 = s.Phone2,
             Email = s.Email,
             Website = s.Website,
             TaxId = s.TaxId,
@@ -496,7 +492,8 @@ public class SchoolController : ControllerBase
             SchoolSizeStd4 = s.SchoolSizeStd4,
             SchoolSizeStd7 = s.SchoolSizeStd7,
             SchoolSizeHr = s.SchoolSizeHr,
-            SchoolLevel = s.SchoolLevel,
+            SchoolLevelId = s.SchoolLevelId,
+            SchoolLevelNameTh = s.SchoolLevelNav?.NameTh,
             Principal = s.Principal,
             EstablishedDate = s.EstablishedDate,
             IsActive = s.IsActive,
@@ -661,7 +658,7 @@ public class SchoolController : ControllerBase
                 a.Personnel.LastName,
                 FullName = a.Personnel.FirstName + " " + a.Personnel.LastName,
                 a.Position,
-                a.Personnel.PersonnelType,
+                PersonnelTypeCode = a.Personnel.PersonnelTypeNav.Code,
                 CurrentSchoolId = a.SchoolId,
                 CurrentSchoolName = a.School.NameTh
             })
@@ -669,7 +666,7 @@ public class SchoolController : ControllerBase
 
         // Also include personnel with Director type regardless of position text
         var directors = await _context.Personnel
-            .Where(p => p.PersonnelType == "Director")
+            .Where(p => p.PersonnelTypeNav.Code == "Director")
             .Where(p => p.SchoolAssignments.Any(a => a.School.AreaId == areaId && (a.EndDate == null || a.EndDate >= DateOnly.FromDateTime(DateTime.Today))))
             .Select(p => new
             {
@@ -678,7 +675,7 @@ public class SchoolController : ControllerBase
                 p.LastName,
                 FullName = p.FirstName + " " + p.LastName,
                 Position = (string?)(p.SchoolAssignments.First().Position ?? "ผู้บริหารสถานศึกษา"),
-                p.PersonnelType,
+                PersonnelTypeCode = p.PersonnelTypeNav.Code,
                 CurrentSchoolId = p.SchoolAssignments.First().SchoolId,
                 CurrentSchoolName = p.SchoolAssignments.First().School.NameTh
             })
@@ -704,12 +701,11 @@ public record SchoolRequest(
     int AreaTypeId,
     string? SchoolCluster,
     string? Phone,
-    string? Phone2,
     string? Email,
     string? Website,
     string? TaxId,
     string? SchoolType,
-    string? SchoolLevel,
+    int? SchoolLevelId,
     string? Principal,
     DateOnly? EstablishedDate,
     decimal? Latitude,
@@ -722,7 +718,6 @@ public record SchoolRequest(
 
 public record SchoolProfileUpdateRequest(
     string? Phone,
-    string? Phone2,
     string? Email,
     string? Website,
     string? Principal,
@@ -739,7 +734,7 @@ public record SchoolListItemDto(
     string? Phone,
     string? SubDistrictName,
     string? DistrictName,
-    string? SchoolLevel,
+    string? SchoolLevelNameTh,
     string? SchoolType,
     bool IsActive,
     int? StudentCount,
@@ -767,7 +762,7 @@ public record SchoolPersonnelItemDto(
     string? TitlePrefix,
     string FirstName,
     string LastName,
-    string PersonnelType,
+    string PersonnelTypeCode,
     string? Position,
     bool IsPrimary
 );
@@ -784,7 +779,7 @@ public record RecycledSchoolDto(
     string? Principal,
     string? SubDistrictName,
     string? DistrictName,
-    string? SchoolLevel,
+    string? SchoolLevelNameTh,
     int? StudentCount,
     int? TeacherCount,
     DateTimeOffset DeletedAt,
