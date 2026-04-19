@@ -237,7 +237,13 @@ public class PersonnelAdminController(
                 p.FirstName,
                 p.LastName,
                 PositionType  = p.PositionType != null ? p.PositionType.NameTh : null,
-                AcademicRank  = p.AcademicStandingType != null ? p.AcademicStandingType.NameTh : null,
+                // Compound text: assignment value → position+standing → suffix only
+                AcademicRank  = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.AcademicRank).FirstOrDefault()
+                             ?? (p.AcademicStandingType != null && p.AcademicStandingType.Code != "none"
+                                 ? (p.PositionType != null
+                                     ? p.PositionType.NameTh + p.AcademicStandingType.NameTh
+                                     : p.AcademicStandingType.NameTh)
+                                 : null),
                 SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.SalaryLevel).FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
@@ -461,7 +467,13 @@ public class PersonnelAdminController(
             p.LastName,
             PositionType     = p.PositionType?.NameTh,
             PositionTypeId   = p.PositionTypeId,
-            AcademicRank     = p.AcademicStandingType?.NameTh,
+            // AcademicRank priority: assignment compound text → build from position+standing → suffix only
+            AcademicRank = primarySa?.AcademicRank
+                ?? (p.AcademicStandingType != null && p.AcademicStandingType.Code != "none"
+                    ? (p.PositionType != null
+                        ? $"{p.PositionType.NameTh}{p.AcademicStandingType.NameTh}"
+                        : p.AcademicStandingType.NameTh)
+                    : null),
             AcademicRankId   = p.AcademicStandingTypeId,
             SalaryLevel      = primarySa?.SalaryLevel,
             PrimarySchool = primarySa is null ? null : new
@@ -609,6 +621,24 @@ public class PersonnelAdminController(
                 .FirstOrDefaultAsync(ct);
         }
 
+        // Resolve PersonnelType → FK: prefer direct ID, fall back to code lookup
+        int? personnelTypeId   = req.PersonnelTypeId;
+        string personnelTypeCode = req.PersonnelType ?? "";
+        if (personnelTypeId.HasValue && string.IsNullOrEmpty(personnelTypeCode))
+        {
+            personnelTypeCode = await db.PersonnelTypes
+                .Where(t => t.Id == personnelTypeId.Value)
+                .Select(t => t.Code)
+                .FirstOrDefaultAsync(ct) ?? req.PersonnelType ?? "";
+        }
+        else if (!personnelTypeId.HasValue && !string.IsNullOrWhiteSpace(personnelTypeCode))
+        {
+            personnelTypeId = await db.PersonnelTypes
+                .Where(t => t.Code == personnelTypeCode.Trim())
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
         // Auto-generate PersonnelCode if not provided
         var personnelCode = req.PersonnelCode;
         if (string.IsNullOrWhiteSpace(personnelCode))
@@ -625,7 +655,8 @@ public class PersonnelAdminController(
             FirstName         = req.FirstName,
             LastName          = req.LastName,
             IdCard            = req.IdCard,
-            PersonnelType     = req.PersonnelType,
+            PersonnelTypeId   = personnelTypeId,
+            PersonnelType     = personnelTypeCode,
             Gender            = req.Gender?.Length > 0 ? req.Gender[0] : 'U',
             BirthDate         = DateOnly.TryParse(req.BirthDate, out var bd) ? bd : null,
             AppointmentDate   = DateOnly.TryParse(req.AppointmentDate, out var apd) ? apd : null,
@@ -700,8 +731,9 @@ public class PersonnelAdminController(
         int.TryParse(userIdStr, out var requestedBy);
 
         // Resolve FK lookups before the ExecuteUpdateAsync call.
-        int? newTitlePrefixId  = p.TitlePrefixId;
-        int? newPositionTypeId = p.PositionTypeId;
+        int? newTitlePrefixId       = p.TitlePrefixId;
+        int? newPositionTypeId      = p.PositionTypeId;
+        int? newAcademicStandingId  = p.AcademicStandingTypeId;
 
         if (req.TitlePrefixId.HasValue)
             newTitlePrefixId = req.TitlePrefixId;
@@ -719,6 +751,40 @@ public class PersonnelAdminController(
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
 
+        int?   newPersonnelTypeId   = p.PersonnelTypeId;
+        string newPersonnelTypeCode = p.PersonnelType ?? "";
+        if (req.PersonnelTypeId.HasValue)
+        {
+            newPersonnelTypeId = req.PersonnelTypeId;
+            newPersonnelTypeCode = await db.PersonnelTypes
+                .Where(t => t.Id == req.PersonnelTypeId.Value)
+                .Select(t => t.Code)
+                .FirstOrDefaultAsync(ct) ?? p.PersonnelType ?? "";
+        }
+        else if (!string.IsNullOrWhiteSpace(req.PersonnelType))
+        {
+            newPersonnelTypeCode = req.PersonnelType.Trim();
+            newPersonnelTypeId   = await db.PersonnelTypes
+                .Where(t => t.Code == newPersonnelTypeCode)
+                .Select(t => (int?)t.Id)
+                .FirstOrDefaultAsync(ct) ?? p.PersonnelTypeId;
+        }
+
+        // Resolve AcademicStandingTypeId from submitted compound academicRank text.
+        // The compound text is "<PositionNameTh><Suffix>" e.g. "ครูชำนาญการพิเศษ".
+        // We match the LONGEST suffix in AcademicStandingTypes (e.g. "ชำนาญการพิเศษ" before "ชำนาญการ").
+        if (!string.IsNullOrWhiteSpace(req.AcademicRank))
+        {
+            var standings = await db.AcademicStandingTypes.AsNoTracking()
+                .Where(s => s.Code != "none")
+                .OrderByDescending(s => s.NameTh.Length)
+                .ToListAsync(ct);
+            var match = standings.FirstOrDefault(s =>
+                req.AcademicRank.EndsWith(s.NameTh, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+                newAcademicStandingId = match.Id;
+        }
+
         DateOnly? newBirthDate = p.BirthDate;
         if (req.BirthDate is not null && DateOnly.TryParse(req.BirthDate, out var updBd))
             newBirthDate = updBd;
@@ -734,8 +800,11 @@ public class PersonnelAdminController(
         await db.Personnel
             .Where(x => x.Id == id)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(x => x.TitlePrefixId,    newTitlePrefixId)
-                .SetProperty(x => x.PositionTypeId,   newPositionTypeId)
+                .SetProperty(x => x.TitlePrefixId,          newTitlePrefixId)
+                .SetProperty(x => x.PositionTypeId,          newPositionTypeId)
+                .SetProperty(x => x.AcademicStandingTypeId,  newAcademicStandingId)
+                .SetProperty(x => x.PersonnelTypeId,         newPersonnelTypeId)
+                .SetProperty(x => x.PersonnelType,           newPersonnelTypeCode)
                 .SetProperty(x => x.FirstName,        req.FirstName        ?? p.FirstName)
                 .SetProperty(x => x.LastName,         req.LastName         ?? p.LastName)
                 .SetProperty(x => x.BirthDate,        newBirthDate)
@@ -750,6 +819,38 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.UpdatedAt,        now)
                 .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
+        // Update school assignment: AcademicRank, SalaryLevel, SpecialRoleType, Position.
+        // Try primary assignment first; fall back to any assignment (handles IsPrimary sync edge cases).
+        var assignment = await db.PersonnelSchoolAssignments
+            .FirstOrDefaultAsync(a => a.PersonnelId == id && a.IsPrimary, ct)
+            ?? await db.PersonnelSchoolAssignments
+                .OrderByDescending(a => a.Id)
+                .FirstOrDefaultAsync(a => a.PersonnelId == id, ct);
+        if (assignment != null)
+        {
+            if (req.AcademicRank    != null) assignment.AcademicRank    = req.AcademicRank;
+            if (req.SalaryLevel     != null) assignment.SalaryLevel     = req.SalaryLevel;
+            if (req.SpecialRoleType != null) assignment.SpecialRoleType = req.SpecialRoleType;
+            // Sync Position text when PositionType changed (resolve name from FK)
+            if (req.PositionTypeId.HasValue || !string.IsNullOrWhiteSpace(req.PositionType))
+            {
+                if (newPositionTypeId.HasValue)
+                {
+                    var positionName = await db.PositionTypes
+                        .Where(pt => pt.Id == newPositionTypeId.Value)
+                        .Select(pt => pt.NameTh)
+                        .FirstOrDefaultAsync(ct);
+                    if (!string.IsNullOrWhiteSpace(positionName))
+                        assignment.Position = positionName;
+                }
+                else if (!string.IsNullOrWhiteSpace(req.PositionType))
+                {
+                    assignment.Position = req.PositionType;
+                }
+            }
+            await db.SaveChangesAsync(ct);
+        }
+
         await cache.RemoveAsync(DetailKey(id));
         await TryInvalidateListAndStats(scope!.CacheTag);
 
@@ -1338,7 +1439,8 @@ public class PersonnelAdminCreateRequest
     public string   FirstName        { get; set; } = "";
     public string   LastName         { get; set; } = "";
     public string?  IdCard           { get; set; }
-    public string   PersonnelType    { get; set; } = "";
+    public int?     PersonnelTypeId  { get; set; }  // direct FK — preferred
+    public string   PersonnelType    { get; set; } = "";  // code fallback (legacy)
     public string?  Gender           { get; set; }
     public string?  BirthDate        { get; set; }  // ISO date "1990-01-15"
     public string?  AppointmentDate  { get; set; }  // วันที่บรรจุแต่งตั้ง ISO date
@@ -1362,6 +1464,8 @@ public class PersonnelAdminUpdateRequest
 {
     public int?     TitlePrefixId    { get; set; }  // direct FK — preferred
     public string?  TitlePrefix      { get; set; }  // plain text fallback
+    public int?     PersonnelTypeId  { get; set; }  // direct FK — preferred
+    public string?  PersonnelType    { get; set; }  // code fallback (legacy)
     public string?  FirstName        { get; set; }
     public string?  LastName         { get; set; }
     public string?  BirthDate        { get; set; }

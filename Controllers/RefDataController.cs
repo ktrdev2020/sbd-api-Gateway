@@ -21,6 +21,32 @@ public class RefDataController : ControllerBase
         _cache = cache;
     }
 
+    [HttpGet("personnel-types")]
+    public async Task<ActionResult> GetPersonnelTypes()
+    {
+        const string cacheKey = "refdata:personnel-types";
+        var cached = await _cache.GetAsync<List<PersonnelTypeDto>>(cacheKey);
+        if (cached is { Count: > 0 })
+            return Ok(cached);
+
+        var data = await _context.PersonnelTypes.AsNoTracking()
+            .Where(p => p.IsActive)
+            .OrderBy(p => p.SortOrder)
+            .Select(p => new PersonnelTypeDto
+            {
+                Id               = p.Id,
+                Code             = p.Code,
+                NameTh           = p.NameTh,
+                NameEn           = p.NameEn,
+                PositionCategory = p.PositionCategory,
+                SortOrder        = p.SortOrder,
+                IsActive         = p.IsActive,
+            })
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
+
     [HttpGet("title-prefixes")]
     public async Task<ActionResult<IEnumerable<TitlePrefix>>> GetTitlePrefixes()
     {
@@ -217,6 +243,18 @@ public class RefDataController : ControllerBase
 }
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
+
+/// <summary>Projection for PersonnelType — DB-driven dropdown source.</summary>
+public class PersonnelTypeDto
+{
+    public int     Id               { get; set; }
+    public string  Code             { get; set; } = "";
+    public string  NameTh           { get; set; } = "";
+    public string? NameEn           { get; set; }
+    public string  PositionCategory { get; set; } = "";
+    public int     SortOrder        { get; set; }
+    public bool    IsActive         { get; set; }
+}
 
 /// <summary>Projection for EducationLevel — excludes navigation properties.</summary>
 public record EducationLevelDto(

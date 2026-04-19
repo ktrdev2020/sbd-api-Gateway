@@ -1124,6 +1124,19 @@ using (var scope = app.Services.CreateScope())
     // Ensure Specialties + SubjectAreas tables exist (idempotent — these were in a migration
     // that was baselined, so the CREATE TABLE may not have run against the live DB).
     await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""PersonnelTypes"" (
+            ""Id""               SERIAL PRIMARY KEY,
+            ""Code""             TEXT NOT NULL,
+            ""NameTh""           TEXT NOT NULL,
+            ""NameEn""           TEXT,
+            ""PositionCategory"" TEXT NOT NULL DEFAULT '',
+            ""SortOrder""        INTEGER NOT NULL DEFAULT 0,
+            ""IsActive""         BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PersonnelTypes_Code"" ON ""PersonnelTypes"" (""Code"");
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""PersonnelTypeId"" INTEGER NULL
+            REFERENCES ""PersonnelTypes""(""Id"") ON DELETE SET NULL;
+
         CREATE TABLE IF NOT EXISTS ""Specialties"" (
             ""Id""        SERIAL PRIMARY KEY,
             ""Code""      TEXT NOT NULL,
@@ -1156,6 +1169,7 @@ using (var scope = app.Services.CreateScope())
         var redisDb = redis.GetDatabase();
         await redisDb.KeyDeleteAsync(new StackExchange.Redis.RedisKey[]
         {
+            "refdata:personnel-types",
             "refdata:education-levels",
             "refdata:specialties",
             "refdata:subject-areas",

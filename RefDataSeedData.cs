@@ -12,9 +12,40 @@ public static class RefDataSeedData
 {
     public static async Task SeedAsync(SbdDbContext db)
     {
+        await SeedPersonnelTypesAsync(db);
         await SeedEducationLevelsAsync(db);
         await SeedSubjectAreasAsync(db);
         await SeedSpecialtiesAsync(db);
+    }
+
+    // ── ประเภทบุคลากร ─────────────────────────────────────────────────────────────
+    private static async Task SeedPersonnelTypesAsync(SbdDbContext db)
+    {
+        var seed = new (string Code, string NameTh, string NameEn, string PositionCategory, int SortOrder)[]
+        {
+            ("Director",       "ผู้บริหารสถานศึกษา",          "School Director",      "ผู้บริหาร",   1),
+            ("Teacher",        "ครู (ข้าราชการ)",              "Government Teacher",   "ครู",         2),
+            ("GovEmployee",    "พนักงานราชการ",                "Government Employee",  "เจ้าหน้าที่", 3),
+            ("PermanentStaff", "ลูกจ้างประจำ",                "Permanent Staff",      "บุคลากรอื่น", 4),
+            ("TempStaff",      "ลูกจ้างชั่วคราว / อัตราจ้าง","Temporary Staff",      "บุคลากรอื่น", 5),
+            ("Staff",          "บุคลากรสนับสนุน",              "Support Staff",        "บุคลากรอื่น", 6),
+        };
+
+        var existing = await db.PersonnelTypes.Select(p => p.Code).ToHashSetAsync();
+        foreach (var (code, nameTh, nameEn, positionCategory, sortOrder) in seed)
+        {
+            if (!existing.Contains(code))
+                db.PersonnelTypes.Add(new SBD.Domain.Entities.PersonnelType
+                {
+                    Code             = code,
+                    NameTh           = nameTh,
+                    NameEn           = nameEn,
+                    PositionCategory = positionCategory,
+                    SortOrder        = sortOrder,
+                    IsActive         = true,
+                });
+        }
+        await db.SaveChangesAsync();
     }
 
     // ── ระดับวุฒิการศึกษา ────────────────────────────────────────────────────────
