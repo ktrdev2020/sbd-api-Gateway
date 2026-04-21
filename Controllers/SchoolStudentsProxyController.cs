@@ -5,13 +5,12 @@ namespace Gateway.Controllers;
 
 /// <summary>
 /// Thin proxy forwarding <c>/api/v1/school/{schoolCode}/students/*</c>
-/// calls to StudentApi. Covers the SchoolAdmin CRUD surface —
-/// GET list + GET detail + POST create + PATCH update + DELETE deactivate.
-/// Preserves JWT + Content-Type on forwarded requests.
+/// calls to StudentApi. Covers the SchoolAdmin CRUD surface plus the
+/// 3 transfer operations (class/in/out). Preserves JWT + Content-Type on
+/// forwarded requests.
 ///
-/// Transfer-class / transfer-in / transfer-out / bulk-promote endpoints
-/// are out of scope for this session — will be added alongside their
-/// backend consumers in a follow-up (per T10 part 2c scope note).
+/// Bulk-promote remains out of scope — requires a WorkerService orchestrator
+/// with SignalR progress phases, tracked separately in the plan.
 /// </summary>
 [ApiController]
 [Route("api/v1/school/{schoolCode}/students")]
@@ -56,6 +55,18 @@ public class SchoolStudentsProxyController : ControllerBase
     [HttpDelete("{studentId:long}")]
     public Task<IActionResult> Deactivate([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
         => ForwardAsync(HttpMethod.Delete, $"/api/v1/school/{schoolCode}/students/{studentId}", ct);
+
+    [HttpPost("{studentId:long}/transfer-class")]
+    public Task<IActionResult> TransferClass([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/{studentId}/transfer-class", ct);
+
+    [HttpPost("transfer-in")]
+    public Task<IActionResult> TransferIn([FromRoute] string schoolCode, CancellationToken ct)
+        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/transfer-in", ct);
+
+    [HttpPost("{studentId:long}/transfer-out")]
+    public Task<IActionResult> TransferOut([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/{studentId}/transfer-out", ct);
 
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string path, CancellationToken ct)
     {
