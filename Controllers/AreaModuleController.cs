@@ -148,7 +148,7 @@ public class AreaModuleController : ControllerBase
             .AsNoTracking()
             .Where(s => s.AreaId == areaId)
             .OrderBy(s => s.NameTh)
-            .Select(s => new { s.Id, NameTh = s.NameTh, s.SchoolCode })
+            .Select(s => new { NameTh = s.NameTh, s.SchoolCode })
             .ToListAsync();
         return Ok(schools);
     }
@@ -170,7 +170,7 @@ public class AreaModuleController : ControllerBase
             .Include(sm => sm.School)
             .Select(sm => new
             {
-                sm.Id, sm.SchoolId,
+                sm.Id,
                 SchoolName = sm.School.NameTh,
                 SchoolCode = sm.School.SchoolCode,
                 sm.IsEnabled,
@@ -218,27 +218,27 @@ public class AreaModuleController : ControllerBase
         if (!await _context.Modules.AnyAsync(m => m.Id == moduleId))
             return NotFound(new { message = "Module not found" });
 
-        var schoolIds = request.SchoolIds.Distinct().ToList();
+        var schoolCodes = request.SchoolCodes.Distinct().ToList();
         var schoolsInArea = await _context.Schools
-            .Where(s => schoolIds.Contains(s.Id) && s.AreaId == areaId)
-            .Select(s => s.Id)
+            .Where(s => schoolCodes.Contains(s.SchoolCode) && s.AreaId == areaId)
+            .Select(s => s.SchoolCode)
             .ToListAsync();
 
-        var invalidSchools = schoolIds.Except(schoolsInArea).ToList();
+        var invalidSchools = schoolCodes.Except(schoolsInArea).ToList();
         if (invalidSchools.Any())
-            return BadRequest(new { message = "Some schools do not belong to this area", invalidSchoolIds = invalidSchools });
+            return BadRequest(new { message = "Some schools do not belong to this area", invalidSchoolCodes = invalidSchools });
 
         var alreadyInstalled = await _context.SchoolModules
-            .Where(sm => schoolIds.Contains(sm.SchoolId) && sm.ModuleId == moduleId)
-            .Select(sm => sm.SchoolId)
+            .Where(sm => schoolCodes.Contains(sm.SchoolCode) && sm.ModuleId == moduleId)
+            .Select(sm => sm.SchoolCode)
             .ToListAsync();
 
-        var newSchoolIds = schoolIds.Except(alreadyInstalled).ToList();
-        foreach (var schoolId in newSchoolIds)
+        var newSchoolCodes = schoolCodes.Except(alreadyInstalled).ToList();
+        foreach (var schoolCode in newSchoolCodes)
         {
             var sm = new SchoolModule
             {
-                SchoolId = schoolId,
+                SchoolCode = schoolCode,
                 ModuleId = moduleId,
                 IsEnabled = true,
                 InstalledAt = DateTimeOffset.UtcNow
@@ -252,9 +252,9 @@ public class AreaModuleController : ControllerBase
 
         return Ok(new
         {
-            message = $"Module assigned to {newSchoolIds.Count} school(s)",
-            assignedSchoolIds = newSchoolIds,
-            alreadyInstalledSchoolIds = alreadyInstalled.Intersect(schoolIds).ToList()
+            message = $"Module assigned to {newSchoolCodes.Count} school(s)",
+            assignedSchoolCodes = newSchoolCodes,
+            alreadyInstalledSchoolCodes = alreadyInstalled.Intersect(schoolCodes).ToList()
         });
     }
 }
@@ -283,7 +283,7 @@ public record UpdateAreaModuleRequest(
 );
 
 public record AssignModuleToSchoolsRequest(
-    List<int> SchoolIds,
+    List<string> SchoolCodes,
     bool IsPilot = false,
     string? Notes = null
 );

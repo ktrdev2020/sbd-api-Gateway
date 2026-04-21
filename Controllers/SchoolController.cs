@@ -81,7 +81,6 @@ public class SchoolController : ControllerBase
             .Skip(offset)
             .Take(limit)
             .Select(s => new SchoolListItemDto(
-                s.Id,
                 s.SchoolCode,
                 s.NameTh,
                 s.Principal,
@@ -105,8 +104,8 @@ public class SchoolController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<SchoolDto>> GetById(int id)
+    [HttpGet("{schoolCode}")]
+    public async Task<ActionResult<SchoolDto>> GetByCode(string schoolCode)
     {
         var school = await _context.Schools
             .Include(s => s.Area)
@@ -115,13 +114,13 @@ public class SchoolController : ControllerBase
                 .ThenInclude(a => a!.SubDistrict)
                     .ThenInclude(sd => sd.District)
                         .ThenInclude(d => d.Province)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
 
         if (school == null)
             return NotFound(new { message = "School not found" });
 
         var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => psa.SchoolId == id);
+            .CountAsync(psa => psa.SchoolCode == schoolCode);
 
         return Ok(MapToDto(school, teacherCount));
     }
@@ -161,16 +160,16 @@ public class SchoolController : ControllerBase
         await _context.SaveChangesAsync();
         await _cache.RemoveAsync(CacheKey);
 
-        return CreatedAtAction(nameof(GetById), new { id = school.Id }, MapToDto(school));
+        return CreatedAtAction(nameof(GetByCode), new { schoolCode = school.SchoolCode }, MapToDto(school));
     }
 
-    [HttpPut("{id:int}")]
-    public async Task<ActionResult<SchoolDto>> Update(int id, [FromBody] SchoolRequest request)
+    [HttpPut("{schoolCode}")]
+    public async Task<ActionResult<SchoolDto>> Update(string schoolCode, [FromBody] SchoolRequest request)
     {
         var school = await _context.Schools.AsTracking()
             .Include(s => s.Area)
             .Include(s => s.AreaType)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
 
         if (school == null)
             return NotFound(new { message = "School not found" });
@@ -211,10 +210,10 @@ public class SchoolController : ControllerBase
     /// from normal queries but can be restored. Permanent removal requires a
     /// separate explicit call to <see cref="PermanentDelete"/>.
     /// </summary>
-    [HttpDelete("{id:int}")]
-    public async Task<ActionResult> Delete(int id)
+    [HttpDelete("{schoolCode}")]
+    public async Task<ActionResult> Delete(string schoolCode)
     {
-        var school = await _context.Schools.AsTracking().FirstOrDefaultAsync(s => s.Id == id);
+        var school = await _context.Schools.AsTracking().FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school == null)
             return NotFound(new { message = "School not found" });
 
@@ -255,7 +254,6 @@ public class SchoolController : ControllerBase
         var items = await query
             .OrderByDescending(s => s.DeletedAt)
             .Select(s => new RecycledSchoolDto(
-                s.Id,
                 s.SchoolCode,
                 s.NameTh,
                 s.Principal,
@@ -277,8 +275,8 @@ public class SchoolController : ControllerBase
     }
 
     /// <summary>Restore a school from the recycle bin back to live state.</summary>
-    [HttpPost("{id:int}/restore")]
-    public async Task<ActionResult<SchoolDto>> RestoreFromBin(int id)
+    [HttpPost("{schoolCode}/restore")]
+    public async Task<ActionResult<SchoolDto>> RestoreFromBin(string schoolCode)
     {
         var school = await _context.Schools.AsTracking()
             .Include(s => s.Area)
@@ -287,7 +285,7 @@ public class SchoolController : ControllerBase
                 .ThenInclude(a => a!.SubDistrict)
                     .ThenInclude(sd => sd.District)
                         .ThenInclude(d => d.Province)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
 
         if (school == null)
             return NotFound(new { message = "School not found" });
@@ -307,10 +305,10 @@ public class SchoolController : ControllerBase
     /// Permanently delete a school. This is destructive and cannot be undone.
     /// The school must already be in the recycle bin.
     /// </summary>
-    [HttpDelete("{id:int}/permanent")]
-    public async Task<ActionResult> PermanentDelete(int id)
+    [HttpDelete("{schoolCode}/permanent")]
+    public async Task<ActionResult> PermanentDelete(string schoolCode)
     {
-        var school = await _context.Schools.AsTracking().FirstOrDefaultAsync(s => s.Id == id);
+        var school = await _context.Schools.AsTracking().FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school == null)
             return NotFound(new { message = "School not found" });
 
@@ -329,13 +327,13 @@ public class SchoolController : ControllerBase
 
     // ─── School-Level Profile Update ──────────────────────────
 
-    [HttpPut("{id:int}/profile")]
-    public async Task<ActionResult<SchoolDto>> UpdateProfile(int id, [FromBody] SchoolProfileUpdateRequest request)
+    [HttpPut("{schoolCode}/profile")]
+    public async Task<ActionResult<SchoolDto>> UpdateProfile(string schoolCode, [FromBody] SchoolProfileUpdateRequest request)
     {
         var school = await _context.Schools.AsTracking()
             .Include(s => s.Area)
             .Include(s => s.AreaType)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
 
         if (school == null)
             return NotFound(new { message = "School not found" });
@@ -356,11 +354,11 @@ public class SchoolController : ControllerBase
 
     // ─── Personnel ────────────────────────────────────────────
 
-    [HttpGet("{id:int}/personnel")]
-    public async Task<ActionResult<IEnumerable<SchoolPersonnelItemDto>>> GetSchoolPersonnel(int id)
+    [HttpGet("{schoolCode}/personnel")]
+    public async Task<ActionResult<IEnumerable<SchoolPersonnelItemDto>>> GetSchoolPersonnel(string schoolCode)
     {
         var personnel = await _context.Set<PersonnelSchoolAssignment>()
-            .Where(psa => psa.SchoolId == id)
+            .Where(psa => psa.SchoolCode == schoolCode)
             .OrderBy(psa => psa.Personnel.PersonnelTypeNav.Code)
             .ThenBy(psa => psa.Personnel.FirstName)
             .Select(psa => new SchoolPersonnelItemDto(
@@ -401,7 +399,6 @@ public class SchoolController : ControllerBase
         var schools = await query
             .OrderBy(s => s.NameTh)
             .Select(s => new SchoolListItemDto(
-                s.Id,
                 s.SchoolCode,
                 s.NameTh,
                 s.Principal,
@@ -420,9 +417,9 @@ public class SchoolController : ControllerBase
         return Ok(schools);
     }
 
-    [HttpGet("public/{id:int}")]
+    [HttpGet("public/{schoolCode}")]
     [AllowAnonymous]
-    public async Task<ActionResult<SchoolDto>> GetPublicById(int id)
+    public async Task<ActionResult<SchoolDto>> GetPublicByCode(string schoolCode)
     {
         var school = await _context.Schools
             .Where(s => s.IsActive && s.DeletedAt == null)
@@ -432,13 +429,13 @@ public class SchoolController : ControllerBase
                 .ThenInclude(a => a!.SubDistrict)
                     .ThenInclude(sd => sd.District)
                         .ThenInclude(d => d.Province)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
 
         if (school == null)
             return NotFound(new { message = "School not found" });
 
         var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => psa.SchoolId == id);
+            .CountAsync(psa => psa.SchoolCode == schoolCode);
 
         return Ok(MapToDto(school, teacherCount));
     }
@@ -452,7 +449,7 @@ public class SchoolController : ControllerBase
         var summary = new SchoolSummaryDto(
             TotalSchools: await activeSchools.CountAsync(),
             TotalTeachers: await _context.Set<PersonnelSchoolAssignment>()
-                .CountAsync(psa => activeSchools.Any(s => s.Id == psa.SchoolId)),
+                .CountAsync(psa => activeSchools.Any(s => s.SchoolCode == psa.SchoolCode)),
             TotalStudents: await activeSchools.SumAsync(s => s.StudentCount ?? 0),
             Districts: await activeSchools
                 .Where(s => s.Address != null && s.Address.SubDistrict != null)
@@ -471,7 +468,6 @@ public class SchoolController : ControllerBase
     {
         return new SchoolDto
         {
-            Id = s.Id,
             SchoolCode = s.SchoolCode,
             SmisCode = s.SmisCode,
             PerCode = s.PerCode,
@@ -534,9 +530,9 @@ public class SchoolController : ControllerBase
             .Distinct()
             .ToListAsync();
 
-        var schoolIds = schools.Select(s => s.Id).ToList();
+        var schoolCodes = schools.Select(s => s.SchoolCode).ToList();
         var personnelCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => schoolIds.Contains(psa.SchoolId));
+            .CountAsync(psa => schoolCodes.Contains(psa.SchoolCode));
 
         return Ok(new AreaSchoolsSummaryDto(
             TotalSchools: schools.Count,
@@ -548,10 +544,10 @@ public class SchoolController : ControllerBase
     }
 
     /// <summary>Assign a principal to a school (from personnel with Director position).</summary>
-    [HttpPut("{id:int}/principal")]
-    public async Task<ActionResult> AssignPrincipal(int id, [FromBody] AssignPrincipalRequest request)
+    [HttpPut("{schoolCode}/principal")]
+    public async Task<ActionResult> AssignPrincipal(string schoolCode, [FromBody] AssignPrincipalRequest request)
     {
-        var school = await _context.Schools.FindAsync(id);
+        var school = await _context.Schools.FindAsync(schoolCode);
         if (school == null) return NotFound(new { message = "School not found" });
 
         if (request.PersonnelId.HasValue)
@@ -563,14 +559,14 @@ public class SchoolController : ControllerBase
 
             // Ensure personnel has school assignment
             var assignment = await _context.PersonnelSchoolAssignments
-                .FirstOrDefaultAsync(a => a.PersonnelId == request.PersonnelId.Value && a.SchoolId == id);
+                .FirstOrDefaultAsync(a => a.PersonnelId == request.PersonnelId.Value && a.SchoolCode == schoolCode);
 
             if (assignment == null)
             {
                 _context.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
                 {
                     PersonnelId = request.PersonnelId.Value,
-                    SchoolId = id,
+                    SchoolCode = schoolCode,
                     Position = request.Position ?? "ผู้อำนวยการโรงเรียน",
                     IsPrimary = true,
                     StartDate = DateOnly.FromDateTime(DateTime.Today)
@@ -587,8 +583,10 @@ public class SchoolController : ControllerBase
             // RoleChangedEvent after SaveChanges — AuthService consumes it to
             // invalidate the user's role cache so their next /auth/refresh
             // includes the school_admin role without forcing a re-login.
-            (int userId, int roleId, string roleCode, int schoolId)? roleAssigned = null;
-            if (personnel.UserId.HasValue)
+            // Option A: SchoolCode string → int for polymorphic ScopeId column
+            var scopeId = int.TryParse(schoolCode, out var parsedCode) ? parsedCode : (int?)null;
+            (int userId, int roleId, string roleCode, int scopeId)? roleAssigned = null;
+            if (personnel.UserId.HasValue && scopeId.HasValue)
             {
                 var schoolAdminRole = await _context.Roles.FirstOrDefaultAsync(r => r.Code == "school_admin");
                 if (schoolAdminRole != null)
@@ -596,7 +594,7 @@ public class SchoolController : ControllerBase
                     var existingRole = await _context.UserRoles
                         .FirstOrDefaultAsync(ur => ur.UserId == personnel.UserId.Value
                             && ur.RoleId == schoolAdminRole.Id
-                            && ur.ScopeType == "School" && ur.ScopeId == id);
+                            && ur.ScopeType == "School" && ur.ScopeId == scopeId);
                     if (existingRole == null)
                     {
                         _context.UserRoles.Add(new UserRole
@@ -604,10 +602,10 @@ public class SchoolController : ControllerBase
                             UserId = personnel.UserId.Value,
                             RoleId = schoolAdminRole.Id,
                             ScopeType = "School",
-                            ScopeId = id,
+                            ScopeId = scopeId,
                             AssignedAt = DateTimeOffset.UtcNow
                         });
-                        roleAssigned = (personnel.UserId.Value, schoolAdminRole.Id, schoolAdminRole.Code, id);
+                        roleAssigned = (personnel.UserId.Value, schoolAdminRole.Id, schoolAdminRole.Code, scopeId.Value);
                     }
                 }
             }
@@ -625,7 +623,7 @@ public class SchoolController : ControllerBase
                     RoleId: r.roleId,
                     RoleCode: r.roleCode,
                     Action: "assigned",
-                    ScopeId: r.schoolId,
+                    ScopeId: r.scopeId,
                     ScopeType: "School"));
             }
 
@@ -659,7 +657,7 @@ public class SchoolController : ControllerBase
                 FullName = a.Personnel.FirstName + " " + a.Personnel.LastName,
                 a.Position,
                 PersonnelTypeCode = a.Personnel.PersonnelTypeNav.Code,
-                CurrentSchoolId = a.SchoolId,
+                CurrentSchoolId = a.SchoolCode,
                 CurrentSchoolName = a.School.NameTh
             })
             .ToListAsync();
@@ -676,7 +674,7 @@ public class SchoolController : ControllerBase
                 FullName = p.FirstName + " " + p.LastName,
                 Position = (string?)(p.SchoolAssignments.First().Position ?? "ผู้บริหารสถานศึกษา"),
                 PersonnelTypeCode = p.PersonnelTypeNav.Code,
-                CurrentSchoolId = p.SchoolAssignments.First().SchoolId,
+                CurrentSchoolId = p.SchoolAssignments.First().SchoolCode,
                 CurrentSchoolName = p.SchoolAssignments.First().School.NameTh
             })
             .ToListAsync();
@@ -727,7 +725,6 @@ public record SchoolProfileUpdateRequest(
 );
 
 public record SchoolListItemDto(
-    int Id,
     string SchoolCode,
     string NameTh,
     string? Principal,
@@ -773,7 +770,6 @@ public record AssignPrincipalRequest(
 );
 
 public record RecycledSchoolDto(
-    int Id,
     string SchoolCode,
     string NameTh,
     string? Principal,

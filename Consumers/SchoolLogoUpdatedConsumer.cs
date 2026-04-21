@@ -31,13 +31,13 @@ public class SchoolLogoUpdatedConsumer : IConsumer<SchoolLogoUpdatedEvent>
     {
         var msg = context.Message;
         var school = await _context.Schools.AsTracking()
-            .FirstOrDefaultAsync(s => s.Id == msg.SchoolId, context.CancellationToken);
+            .FirstOrDefaultAsync(s => s.SchoolCode == msg.SchoolCode, context.CancellationToken);
 
         if (school == null)
         {
             _logger.LogWarning(
-                "[SchoolLogoUpdated] School {SchoolId} not found — dropping event",
-                msg.SchoolId);
+                "[SchoolLogoUpdated] School {SchoolCode} not found — dropping event",
+                msg.SchoolCode);
             return;
         }
 
@@ -50,7 +50,7 @@ public class SchoolLogoUpdatedConsumer : IConsumer<SchoolLogoUpdatedEvent>
         await _context.SaveChangesAsync(context.CancellationToken);
 
         _logger.LogInformation(
-            "[SchoolLogoUpdated] School {SchoolId} → version {Version}",
-            msg.SchoolId, msg.Version);
+            "[SchoolLogoUpdated] School {SchoolCode} → version {Version}",
+            msg.SchoolCode, msg.Version);
     }
 }

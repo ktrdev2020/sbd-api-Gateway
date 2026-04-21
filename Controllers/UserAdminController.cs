@@ -38,10 +38,10 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     private static string ListCacheKey(
         string scopeTag,
         string? search, string? role, string? provider, string? district,
-        int? schoolId, string? status, string? positionType, string? subjectArea,
+        string? schoolCode, string? status, string? positionType, string? subjectArea,
         int page, int pageSize)
     {
-        var raw = $"{scopeTag}|{search}|{role}|{provider}|{district}|{schoolId}|{status}|{positionType}|{subjectArea}|{page}|{pageSize}";
+        var raw = $"{scopeTag}|{search}|{role}|{provider}|{district}|{schoolCode}|{status}|{positionType}|{subjectArea}|{page}|{pageSize}";
         var hash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..16];
         return $"{ListPrefix}{hash}";
     }
@@ -55,8 +55,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     private record CallerScope(
         string Role,
         int? AreaId,
-        int? SchoolId,
-        IReadOnlyList<int> AllowedSchoolIds,
+        string? SchoolCode,
+        IReadOnlyList<string> AllowedSchoolCodes,
         string CacheTag,
         bool CanMutate = true);
 
@@ -64,7 +64,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
     {
         // super_admin — unrestricted
         if (User.IsInRole("super_admin") || User.IsInRole("SuperAdmin"))
-            return new CallerScope("super_admin", null, null, Array.Empty<int>(), "global");
+            return new CallerScope("super_admin", null, null, Array.Empty<string>(), "global");
 
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         if (!int.TryParse(userIdStr, out var userId)) return null;
@@ -81,17 +81,17 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         if (areaRole is not null)
         {
             var areaId = areaRole.ScopeId!.Value;
-            var schoolIds = await db.Schools
+            var schoolCodes = await db.Schools
                 .AsNoTracking()
                 .Where(s => s.AreaId == areaId)
-                .Select(s => s.Id)
+                .Select(s => s.SchoolCode)
                 .ToListAsync(ct);
-            return new CallerScope("area_admin", areaId, null, schoolIds, $"area:{areaId}");
+            return new CallerScope("area_admin", areaId, null, schoolCodes, $"area:{areaId}");
         }
 
         // school_admin — 3-tier resolution for "user.manage_school_users":
-        //   1. School-specific policy (SchoolId = this school) → use its AllowSchoolAdmin.
-        //   2. Area-wide policy (SchoolId = null) → use its AllowSchoolAdmin.
+        //   1. School-specific policy (SchoolCode = this school) → use its AllowSchoolAdmin.
+        //   2. Area-wide policy (SchoolCode = null) → use its AllowSchoolAdmin.
         //   3. No policy at all → allow by default (opt-out model).
         var schoolRole = await db.UserRoles
             .Include(ur => ur.Role)
@@ -103,24 +103,21 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
 
         if (schoolRole is not null)
         {
-            var schoolId = schoolRole.ScopeId!.Value;
+            // Option A: polymorphic int ScopeId → string SchoolCode
+            var schoolCode = schoolRole.ScopeId!.Value.ToString();
             var school   = await db.Schools.AsNoTracking()
-                .Select(s => new { s.Id, s.AreaId })
-                .FirstOrDefaultAsync(s => s.Id == schoolId, ct);
+                .Select(s => new { s.SchoolCode, s.AreaId })
+                .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode, ct);
             if (school is null) return null;
 
             const string code = "user.manage_school_users";
 
-            // 3-tier "user.manage_school_users" policy check:
-            //   1. School-specific policy → use AllowSchoolAdmin
-            //   2. Area-wide policy (SchoolId IS NULL) → use AllowSchoolAdmin
-            //   3. No policy → allowed by default (opt-out model)
             var canMutate = true;
 
             var schoolPolicy = await db.AreaPermissionPolicies
                 .FirstOrDefaultAsync(p =>
                     p.AreaId == school.AreaId
-                    && p.SchoolId == schoolId
+                    && p.SchoolCode == schoolCode
                     && p.PermissionCode == code, ct);
 
             if (schoolPolicy is not null)
@@ -132,7 +129,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 var areaPolicy = await db.AreaPermissionPolicies
                     .FirstOrDefaultAsync(p =>
                         p.AreaId == school.AreaId
-                        && p.SchoolId == null
+                        && p.SchoolCode == null
                         && p.PermissionCode == code, ct);
 
                 if (areaPolicy is not null) canMutate = areaPolicy.AllowSchoolAdmin;
@@ -141,30 +138,30 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             // Mutation endpoints block when policy denies; read-only endpoints always succeed
             if (!canMutate && !readOnly) return null;
 
-            return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}", canMutate);
+            return new CallerScope("school_admin", null, schoolCode, new[] { schoolCode }, $"school:{schoolCode}", canMutate);
         }
 
         return null;
     }
 
     // Returns true when the caller (area_admin / school_admin) is allowed to act on the given user.
-    // For super_admin the check is always skipped (AllowedSchoolIds empty = unrestricted).
-    private static bool IsInScope(CallerScope scope, IEnumerable<int> userSchoolIds)
+    // For super_admin the check is always skipped (AllowedSchoolCodes empty = unrestricted).
+    private static bool IsInScope(CallerScope scope, IEnumerable<string> userSchoolCodes)
     {
         if (scope.Role == "super_admin") return true;
-        if (scope.AllowedSchoolIds.Count == 0) return false;
-        return userSchoolIds.Any(id => scope.AllowedSchoolIds.Contains(id));
+        if (scope.AllowedSchoolCodes.Count == 0) return false;
+        return userSchoolCodes.Any(id => scope.AllowedSchoolCodes.Contains(id));
     }
 
     // Applies scope restriction to a User query (before counting / fetching).
     private static IQueryable<User> ApplyScopeFilter(IQueryable<User> query, CallerScope scope)
     {
         if (scope.Role == "super_admin") return query;
-        if (scope.AllowedSchoolIds.Count == 0) return query.Where(_ => false);
+        if (scope.AllowedSchoolCodes.Count == 0) return query.Where(_ => false);
         return query.Where(u =>
             u.Personnel != null &&
             u.Personnel.SchoolAssignments.Any(sa =>
-                sa.IsPrimary && scope.AllowedSchoolIds.Contains(sa.SchoolId)));
+                sa.IsPrimary && scope.AllowedSchoolCodes.Contains(sa.SchoolCode)));
     }
 
     // ─── Cache helpers (graceful — never throw) ───────────────────────────────
@@ -202,7 +199,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         [FromQuery] string? role = null,
         [FromQuery] string? provider = null,
         [FromQuery] string? district = null,
-        [FromQuery] int? schoolId = null,
+        [FromQuery] string? schoolCode = null,
         [FromQuery] string? status = null,
         [FromQuery] bool? hasPersonnel = null,
         [FromQuery] string? positionType = null,
@@ -214,10 +211,10 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
-        // school_admin can only browse their own school — ignore schoolId param
-        if (scope.Role == "school_admin") schoolId = scope.SchoolId;
+        // school_admin can only browse their own school — ignore schoolCode param
+        if (scope.Role == "school_admin") schoolCode = scope.SchoolCode;
 
-        var cacheKey = ListCacheKey(scope.CacheTag, search, role, provider, district, schoolId, status, positionType, subjectArea, page, pageSize);
+        var cacheKey = ListCacheKey(scope.CacheTag, search, role, provider, district, schoolCode, status, positionType, subjectArea, page, pageSize);
         var cached   = await TryGetCache<object>(cacheKey);
         if (cached is not null) return Ok(cached);
 
@@ -302,13 +299,13 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                     sa.IsPrimary &&
                     sa.School.Address != null &&
                     sa.School.Address.SubDistrict.District.NameTh == districtName)
-                .Select(sa => sa.SchoolId)
+                .Select(sa => sa.SchoolCode)
                 .Distinct()
                 .ToListAsync(ct);
 
             var personnelIds = await db.PersonnelSchoolAssignments
                 .AsNoTracking()
-                .Where(sa => sa.IsPrimary && schoolIds.Contains(sa.SchoolId))
+                .Where(sa => sa.IsPrimary && schoolIds.Contains(sa.SchoolCode))
                 .Select(sa => sa.PersonnelId)
                 .Distinct()
                 .ToListAsync(ct);
@@ -317,11 +314,11 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         }
 
         // ── School filter ──────────────────────────────────────────────────
-        if (schoolId.HasValue)
+        if (!string.IsNullOrWhiteSpace(schoolCode))
         {
             query = query.Where(u =>
                 u.Personnel != null &&
-                u.Personnel!.SchoolAssignments.Any(sa => sa.SchoolId == schoolId.Value && sa.IsPrimary));
+                u.Personnel!.SchoolAssignments.Any(sa => sa.SchoolCode == schoolCode && sa.IsPrimary));
         }
 
         var total = await query.CountAsync(ct);
@@ -452,8 +449,8 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 sa.Personnel.UserId != null &&
                 sa.School.Address != null);
 
-        if (scope.Role != "super_admin" && scope.AllowedSchoolIds.Count > 0)
-            districtQuery = districtQuery.Where(sa => scope.AllowedSchoolIds.Contains(sa.SchoolId));
+        if (scope.Role != "super_admin" && scope.AllowedSchoolCodes.Count > 0)
+            districtQuery = districtQuery.Where(sa => scope.AllowedSchoolCodes.Contains(sa.SchoolCode));
 
         var districts = await districtQuery
             .Select(sa => new
@@ -513,12 +510,12 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             // For non-super_admin: scope-check the cached result via a lightweight DB check
             if (scope.Role != "super_admin")
             {
-                var schoolIds = await db.PersonnelSchoolAssignments
+                var schoolCodes = await db.PersonnelSchoolAssignments
                     .AsNoTracking()
                     .Where(sa => sa.IsPrimary && sa.Personnel.UserId == id)
-                    .Select(sa => sa.SchoolId)
+                    .Select(sa => sa.SchoolCode)
                     .ToListAsync(ct);
-                if (!IsInScope(scope, schoolIds)) return Forbid();
+                if (!IsInScope(scope, schoolCodes)) return Forbid();
             }
             return Ok(cachedDetail);
         }
@@ -544,9 +541,9 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         // Scope guard — can this caller access this user?
         if (scope.Role != "super_admin")
         {
-            var userSchoolIds = user.Personnel?.SchoolAssignments
-                .Where(sa => sa.IsPrimary).Select(sa => sa.SchoolId) ?? Enumerable.Empty<int>();
-            if (!IsInScope(scope, userSchoolIds)) return Forbid();
+            var userSchoolCodes = user.Personnel?.SchoolAssignments
+                .Where(sa => sa.IsPrimary).Select(sa => sa.SchoolCode) ?? Enumerable.Empty<string>();
+            if (!IsInScope(scope, userSchoolCodes)) return Forbid();
         }
 
         var prefs = string.IsNullOrEmpty(user.PreferencesJson)
@@ -582,9 +579,11 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             string? scopeName = null;
             if (ur.ScopeType == "School" && ur.ScopeId.HasValue)
             {
+                // Option A: polymorphic int ScopeId → string SchoolCode
+                var scopeSchoolCode = ur.ScopeId.Value.ToString();
                 scopeName = await db.Schools
                     .AsNoTracking()
-                    .Where(s => s.Id == ur.ScopeId.Value)
+                    .Where(s => s.SchoolCode == scopeSchoolCode)
                     .Select(s => s.NameTh)
                     .FirstOrDefaultAsync(ct);
             }
@@ -641,7 +640,7 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 SchoolAssignments = user.Personnel.SchoolAssignments.Select(sa => new
                 {
                     sa.Id,
-                    sa.SchoolId,
+                    sa.SchoolCode,
                     SchoolName = sa.School.NameTh,
                     DistrictName = sa.School.Address?.SubDistrict?.District?.NameTh,
                     sa.Position,
@@ -691,26 +690,28 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         if (scope.Role != "super_admin")
         {
             // Primary path: look up school via Personnel.UserId → SchoolAssignment
-            var schoolIds = await db.PersonnelSchoolAssignments
+            var schoolCodes = await db.PersonnelSchoolAssignments
                 .AsNoTracking()
                 .Where(sa => sa.IsPrimary && sa.Personnel.UserId == targetUserId)
-                .Select(sa => sa.SchoolId)
+                .Select(sa => sa.SchoolCode)
                 .ToListAsync(ct);
 
             // Fallback: for imported users whose Personnel record is not yet linked
             // to a User account, look up the scope from their UserRole directly.
-            if (schoolIds.Count == 0)
+            // Option A: polymorphic int ScopeId → stringify back to SchoolCode
+            if (schoolCodes.Count == 0)
             {
-                schoolIds = await db.UserRoles
+                var scopeIds = await db.UserRoles
                     .AsNoTracking()
                     .Where(ur => ur.UserId == targetUserId
                               && ur.ScopeType == "School"
                               && ur.ScopeId.HasValue)
                     .Select(ur => ur.ScopeId!.Value)
                     .ToListAsync(ct);
+                schoolCodes = scopeIds.Select(x => x.ToString()).ToList();
             }
 
-            if (!IsInScope(scope, schoolIds)) return (null, Forbid());
+            if (!IsInScope(scope, schoolCodes)) return (null, Forbid());
         }
         return (scope, null);
     }
@@ -949,13 +950,15 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 ? "school_admin" : "teacher";
             if (roles.TryGetValue(roleCode, out var roleId))
             {
-                var primarySchoolId = p.SchoolAssignments.FirstOrDefault()?.SchoolId;
+                var primarySchoolCode = p.SchoolAssignments.FirstOrDefault()?.SchoolCode;
+                // Option A: polymorphic int ScopeId → parse SchoolCode string
+                int? scopeIdInt = int.TryParse(primarySchoolCode, out var sid) ? sid : (int?)null;
                 userRoles.Add(new UserRole
                 {
                     User      = user,
                     RoleId    = roleId,
-                    ScopeType = primarySchoolId.HasValue ? "School" : null,
-                    ScopeId   = primarySchoolId,
+                    ScopeType = scopeIdInt.HasValue ? "School" : null,
+                    ScopeId   = scopeIdInt,
                     AssignedAt = DateTimeOffset.UtcNow,
                 });
             }
@@ -1097,13 +1100,15 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 if (!isAdmin && !hasTeacherRole) continue;
                 var roleId = isAdmin ? schoolAdminRoleId : teacherRoleId;
 
-                var primarySchoolId = u.Personnel?.SchoolAssignments.FirstOrDefault()?.SchoolId;
+                var primarySchoolCode = u.Personnel?.SchoolAssignments.FirstOrDefault()?.SchoolCode;
+                // Option A: polymorphic int ScopeId → parse SchoolCode string
+                int? scopeIdInt = int.TryParse(primarySchoolCode, out var sid) ? sid : (int?)null;
                 roleAssignments.Add(new UserRole
                 {
                     UserId     = u.Id,
                     RoleId     = roleId,
-                    ScopeType  = primarySchoolId.HasValue ? "School" : null,
-                    ScopeId    = primarySchoolId,
+                    ScopeType  = scopeIdInt.HasValue ? "School" : null,
+                    ScopeId    = scopeIdInt,
                     AssignedAt = DateTimeOffset.UtcNow,
                 });
             }
@@ -1173,10 +1178,10 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
 
         // super_admin and area_admin can always manage
         if (scope?.Role is "super_admin" or "area_admin")
-            return Ok(new { canManage = true, schoolId = scope.SchoolId });
+            return Ok(new { canManage = true, schoolCode = scope.SchoolCode });
 
         // school_admin: CanMutate reflects the 3-tier policy result
-        return Ok(new { canManage = scope?.CanMutate ?? false, schoolId = scope?.SchoolId });
+        return Ok(new { canManage = scope?.CanMutate ?? false, schoolCode = scope?.SchoolCode });
     }
 
     /// <summary>

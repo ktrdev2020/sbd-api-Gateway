@@ -90,10 +90,15 @@ public class MePermissionsController : ControllerBase
             .AsNoTracking()
             .Where(a => areaIds.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a.NameTh, ct);
-        var schoolNames = await _context.Schools
+        // Option A: polymorphic int ScopeId → string SchoolCode match
+        var schoolCodesStr = schoolIds.Select(i => i.ToString()).ToList();
+        var schoolNamesByCode = await _context.Schools
             .AsNoTracking()
-            .Where(s => schoolIds.Contains(s.Id))
-            .ToDictionaryAsync(s => s.Id, s => s.NameTh, ct);
+            .Where(s => schoolCodesStr.Contains(s.SchoolCode))
+            .ToDictionaryAsync(s => s.SchoolCode, s => s.NameTh, ct);
+        var schoolNames = schoolNamesByCode
+            .Where(kv => int.TryParse(kv.Key, out _))
+            .ToDictionary(kv => int.Parse(kv.Key), kv => kv.Value);
 
         var roleAssignments = userRoles.Select(ur => new RoleAssignmentDto
         {
@@ -128,12 +133,14 @@ public class MePermissionsController : ControllerBase
 
         var modules = new List<ModuleAccessDto>();
 
-        if (schoolId.HasValue)
+        // Option A: polymorphic int ScopeId → string SchoolCode
+        var schoolCode = schoolId.HasValue ? schoolId.Value.ToString() : null;
+        if (!string.IsNullOrEmpty(schoolCode))
         {
             var schoolModules = await _context.SchoolModules
                 .AsNoTracking()
                 .Include(sm => sm.Module)
-                .Where(sm => sm.SchoolId == schoolId.Value && sm.IsEnabled && sm.Module.IsEnabled)
+                .Where(sm => sm.SchoolCode == schoolCode && sm.IsEnabled && sm.Module.IsEnabled)
                 .ToListAsync(ct);
             modules.AddRange(schoolModules.Select(sm => new ModuleAccessDto
             {
@@ -188,11 +195,11 @@ public class MePermissionsController : ControllerBase
         {
             // For school users, resolve their school's area
             int? resolvedAreaId = areaId;
-            if (resolvedAreaId == null && schoolId.HasValue)
+            if (resolvedAreaId == null && !string.IsNullOrEmpty(schoolCode))
             {
                 resolvedAreaId = await _context.Schools
                     .AsNoTracking()
-                    .Where(s => s.Id == schoolId.Value)
+                    .Where(s => s.SchoolCode == schoolCode)
                     .Select(s => (int?)s.AreaId)
                     .FirstOrDefaultAsync(ct);
             }
@@ -222,11 +229,16 @@ public class MePermissionsController : ControllerBase
         var schoolScopeIds = functionalAssignments
             .Where(a => a.ContextScopeType == "School")
             .Select(a => a.ContextScopeId).Distinct().ToList();
-        var faSchoolNames = schoolScopeIds.Count > 0
+        // Option A: polymorphic int ScopeId → string SchoolCode
+        var faSchoolCodes = schoolScopeIds.Select(i => i.ToString()).ToList();
+        var faSchoolByCode = schoolScopeIds.Count > 0
             ? await _context.Schools.AsNoTracking()
-                .Where(s => schoolScopeIds.Contains(s.Id))
-                .ToDictionaryAsync(s => s.Id, s => s.NameTh, ct)
-            : new Dictionary<int, string>();
+                .Where(s => faSchoolCodes.Contains(s.SchoolCode))
+                .ToDictionaryAsync(s => s.SchoolCode, s => s.NameTh, ct)
+            : new Dictionary<string, string>();
+        var faSchoolNames = faSchoolByCode
+            .Where(kv => int.TryParse(kv.Key, out _))
+            .ToDictionary(kv => int.Parse(kv.Key), kv => kv.Value);
 
         var functionalDtos = functionalAssignments.Select(a =>
         {

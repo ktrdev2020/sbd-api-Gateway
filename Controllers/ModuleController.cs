@@ -219,7 +219,7 @@ public class ModuleController : ControllerBase
             .Include(sm => sm.School)
             .Select(sm => new
             {
-                sm.Id, sm.SchoolId,
+                sm.Id, sm.SchoolCode,
                 SchoolName = sm.School.NameTh,
                 sm.IsEnabled,
                 IsPilot = EF.Property<bool>(sm, "IsPilot"),

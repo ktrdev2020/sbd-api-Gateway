@@ -42,7 +42,7 @@ public class AreaPoliciesController(
     {
         var policies = await db.AreaPermissionPolicies
             .AsNoTracking()
-            .Where(p => p.AreaId == areaId && p.SchoolId == null)
+            .Where(p => p.AreaId == areaId && p.SchoolCode == null)
             .OrderBy(p => p.PermissionCode)
             .Select(p => new
             {
@@ -69,14 +69,14 @@ public class AreaPoliciesController(
         CancellationToken ct)
     {
         var policy = await db.AreaPermissionPolicies
-            .FirstOrDefaultAsync(p => p.AreaId == areaId && p.SchoolId == null && p.PermissionCode == code, ct);
+            .FirstOrDefaultAsync(p => p.AreaId == areaId && p.SchoolCode == null && p.PermissionCode == code, ct);
 
         if (policy is null)
         {
             policy = new AreaPermissionPolicy
             {
                 AreaId           = areaId,
-                SchoolId         = null,
+                SchoolCode       = null,
                 PermissionCode   = code,
                 AllowSchoolAdmin = request.AllowSchoolAdmin,
                 Description      = request.Description,
@@ -115,7 +115,7 @@ public class AreaPoliciesController(
             .AsNoTracking()
             .Where(s => s.AreaId == areaId)
             .OrderBy(s => s.NameTh)
-            .Select(s => new { s.Id, s.NameTh, s.SchoolCode })
+            .Select(s => new { s.NameTh, s.SchoolCode })
             .ToListAsync(ct);
 
         // Load all relevant policies for this area + code in one query
@@ -124,17 +124,16 @@ public class AreaPoliciesController(
             .Where(p => p.AreaId == areaId && p.PermissionCode == code)
             .ToListAsync(ct);
 
-        var areaDefault = policies.FirstOrDefault(p => p.SchoolId == null)?.AllowSchoolAdmin ?? true;
+        var areaDefault = policies.FirstOrDefault(p => p.SchoolCode == null)?.AllowSchoolAdmin ?? true;
         var schoolOverrides = policies
-            .Where(p => p.SchoolId != null)
-            .ToDictionary(p => p.SchoolId!.Value, p => p.AllowSchoolAdmin);
+            .Where(p => p.SchoolCode != null)
+            .ToDictionary(p => p.SchoolCode!, p => p.AllowSchoolAdmin);
 
         var result = schools.Select(s =>
         {
-            var isOverridden = schoolOverrides.TryGetValue(s.Id, out var schoolAllow);
+            var isOverridden = schoolOverrides.TryGetValue(s.SchoolCode, out var schoolAllow);
             return new
             {
-                schoolId         = s.Id,
                 schoolName       = s.NameTh,
                 schoolCode       = s.SchoolCode,
                 allowSchoolAdmin = isOverridden ? schoolAllow : areaDefault,
@@ -145,31 +144,31 @@ public class AreaPoliciesController(
         return Ok(result);
     }
 
-    // ── PUT /api/v1/areas/{areaId}/permission-policies/{code}/schools/{schoolId}
+    // ── PUT /api/v1/areas/{areaId}/permission-policies/{code}/schools/{schoolCode}
     /// <summary>Upsert a school-specific policy override.</summary>
-    [HttpPut("{code}/schools/{schoolId:int}")]
+    [HttpPut("{code}/schools/{schoolCode}")]
     public async Task<IActionResult> UpsertSchoolPolicy(
         int areaId,
         string code,
-        int schoolId,
+        string schoolCode,
         [FromBody] TogglePolicyRequest request,
         CancellationToken ct)
     {
         // Validate school belongs to this area
         var schoolExists = await db.Schools
-            .AnyAsync(s => s.Id == schoolId && s.AreaId == areaId, ct);
+            .AnyAsync(s => s.SchoolCode == schoolCode && s.AreaId == areaId, ct);
         if (!schoolExists) return NotFound(new { error = "ไม่พบโรงเรียนในเขตนี้" });
 
         var policy = await db.AreaPermissionPolicies
             .FirstOrDefaultAsync(p =>
-                p.AreaId == areaId && p.SchoolId == schoolId && p.PermissionCode == code, ct);
+                p.AreaId == areaId && p.SchoolCode == schoolCode && p.PermissionCode == code, ct);
 
         if (policy is null)
         {
             policy = new AreaPermissionPolicy
             {
                 AreaId           = areaId,
-                SchoolId         = schoolId,
+                SchoolCode       = schoolCode,
                 PermissionCode   = code,
                 AllowSchoolAdmin = request.AllowSchoolAdmin,
                 Description      = request.Description,
@@ -188,32 +187,32 @@ public class AreaPoliciesController(
 
         await db.SaveChangesAsync(ct);
         logger.LogInformation(
-            "School policy {Code} for school {SchoolId} (area {AreaId}) → AllowSchoolAdmin={Allow} by {Actor}",
-            code, schoolId, areaId, request.AllowSchoolAdmin, ActorUserId);
+            "School policy {Code} for school {SchoolCode} (area {AreaId}) → AllowSchoolAdmin={Allow} by {Actor}",
+            code, schoolCode, areaId, request.AllowSchoolAdmin, ActorUserId);
 
-        return Ok(new { areaId, schoolId, permissionCode = code, allowSchoolAdmin = policy.AllowSchoolAdmin });
+        return Ok(new { areaId, schoolCode, permissionCode = code, allowSchoolAdmin = policy.AllowSchoolAdmin });
     }
 
-    // ── DELETE /api/v1/areas/{areaId}/permission-policies/{code}/schools/{schoolId}
+    // ── DELETE /api/v1/areas/{areaId}/permission-policies/{code}/schools/{schoolCode}
     /// <summary>Remove a school-specific override (school reverts to area-wide default).</summary>
-    [HttpDelete("{code}/schools/{schoolId:int}")]
+    [HttpDelete("{code}/schools/{schoolCode}")]
     public async Task<IActionResult> DeleteSchoolPolicy(
         int areaId,
         string code,
-        int schoolId,
+        string schoolCode,
         CancellationToken ct)
     {
         var policy = await db.AreaPermissionPolicies
             .FirstOrDefaultAsync(p =>
-                p.AreaId == areaId && p.SchoolId == schoolId && p.PermissionCode == code, ct);
+                p.AreaId == areaId && p.SchoolCode == schoolCode && p.PermissionCode == code, ct);
 
         if (policy is null) return NoContent(); // idempotent
 
         db.AreaPermissionPolicies.Remove(policy);
         await db.SaveChangesAsync(ct);
         logger.LogInformation(
-            "School policy {Code} for school {SchoolId} (area {AreaId}) removed by {Actor}",
-            code, schoolId, areaId, ActorUserId);
+            "School policy {Code} for school {SchoolCode} (area {AreaId}) removed by {Actor}",
+            code, schoolCode, areaId, ActorUserId);
 
         return NoContent();
     }

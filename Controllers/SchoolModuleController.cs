@@ -7,7 +7,7 @@ using SBD.Infrastructure.Data;
 namespace Gateway.Controllers;
 
 [ApiController]
-[Route("api/v1/school/{schoolId:int}/module")]
+[Route("api/v1/school/{schoolCode}/module")]
 [Authorize]
 public class SchoolModuleController : ControllerBase
 {
@@ -22,15 +22,15 @@ public class SchoolModuleController : ControllerBase
     /// List all modules installed for a school, including teacher assignments.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<SchoolModuleDto>>> GetSchoolModules(int schoolId)
+    public async Task<ActionResult<IEnumerable<SchoolModuleDto>>> GetSchoolModules(string schoolCode)
     {
-        var schoolExists = await _context.Schools.AnyAsync(s => s.Id == schoolId);
+        var schoolExists = await _context.Schools.AnyAsync(s => s.SchoolCode == schoolCode);
         if (!schoolExists)
             return NotFound(new { message = "School not found" });
 
         var schoolModules = await _context.SchoolModules
             .AsNoTracking()
-            .Where(sm => sm.SchoolId == schoolId)
+            .Where(sm => sm.SchoolCode == schoolCode)
             .Include(sm => sm.Module)
             .Include(sm => sm.TeacherAssignments)
                 .ThenInclude(ta => ta.Teacher)
@@ -38,7 +38,7 @@ public class SchoolModuleController : ControllerBase
             .OrderBy(sm => sm.Module.SortOrder)
             .ThenBy(sm => sm.Module.Name)
             .Select(sm => new SchoolModuleDto(
-                sm.Id, sm.SchoolId, sm.ModuleId,
+                sm.Id, sm.SchoolCode, sm.ModuleId,
                 sm.Module.Code, sm.Module.Name, sm.Module.Description,
                 sm.Module.Icon, sm.Module.Category, sm.Module.Version,
                 sm.Module.RoutePath,
@@ -63,11 +63,11 @@ public class SchoolModuleController : ControllerBase
     /// Get modules available for this school (from area assignments).
     /// </summary>
     [HttpGet("available")]
-    public async Task<ActionResult> GetAvailableModules(int schoolId)
+    public async Task<ActionResult> GetAvailableModules(string schoolCode)
     {
         var school = await _context.Schools
             .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == schoolId);
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school == null)
             return NotFound(new { message = "School not found" });
 
@@ -77,7 +77,7 @@ public class SchoolModuleController : ControllerBase
         // Installed module IDs for this school — used to exclude from the available list
         var installedModuleIds = await _context.SchoolModules
             .AsNoTracking()
-            .Where(sm => sm.SchoolId == schoolId)
+            .Where(sm => sm.SchoolCode == schoolCode)
             .Select(sm => sm.ModuleId)
             .ToListAsync();
 
@@ -112,9 +112,9 @@ public class SchoolModuleController : ControllerBase
     /// Install a module for a school.
     /// </summary>
     [HttpPost]
-    public async Task<ActionResult<SchoolModuleDto>> InstallModule(int schoolId, [FromBody] InstallModuleRequest request)
+    public async Task<ActionResult<SchoolModuleDto>> InstallModule(string schoolCode, [FromBody] InstallModuleRequest request)
     {
-        var schoolExists = await _context.Schools.AnyAsync(s => s.Id == schoolId);
+        var schoolExists = await _context.Schools.AnyAsync(s => s.SchoolCode == schoolCode);
         if (!schoolExists)
             return NotFound(new { message = "School not found" });
 
@@ -123,13 +123,13 @@ public class SchoolModuleController : ControllerBase
             return NotFound(new { message = "Module not found" });
 
         var alreadyInstalled = await _context.SchoolModules
-            .AnyAsync(sm => sm.SchoolId == schoolId && sm.ModuleId == request.ModuleId);
+            .AnyAsync(sm => sm.SchoolCode == schoolCode && sm.ModuleId == request.ModuleId);
         if (alreadyInstalled)
             return Conflict(new { message = "Module is already installed for this school" });
 
         var schoolModule = new SchoolModule
         {
-            SchoolId = schoolId,
+            SchoolCode = schoolCode,
             ModuleId = request.ModuleId,
             IsEnabled = true,
             InstalledAt = DateTimeOffset.UtcNow
@@ -144,9 +144,9 @@ public class SchoolModuleController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetSchoolModules), new { schoolId },
+        return CreatedAtAction(nameof(GetSchoolModules), new { schoolCode },
             new SchoolModuleDto(
-                schoolModule.Id, schoolId, module.Id, module.Code, module.Name,
+                schoolModule.Id, schoolCode, module.Id, module.Code, module.Name,
                 module.Description, module.Icon, module.Category, module.Version,
                 module.RoutePath,
                 schoolModule.IsEnabled, module.AssignableToTeacher, schoolModule.InstalledAt,
@@ -159,12 +159,12 @@ public class SchoolModuleController : ControllerBase
     /// Uninstall a module from a school.
     /// </summary>
     [HttpDelete("{schoolModuleId:int}")]
-    public async Task<ActionResult> UninstallModule(int schoolId, int schoolModuleId)
+    public async Task<ActionResult> UninstallModule(string schoolCode, int schoolModuleId)
     {
         var schoolModule = await _context.SchoolModules
             .AsTracking()
             .Include(sm => sm.Module)
-            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolCode == schoolCode);
 
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
@@ -188,11 +188,11 @@ public class SchoolModuleController : ControllerBase
     /// Toggle enable/disable for a school module.
     /// </summary>
     [HttpPut("{schoolModuleId:int}/toggle")]
-    public async Task<ActionResult> ToggleModule(int schoolId, int schoolModuleId)
+    public async Task<ActionResult> ToggleModule(string schoolCode, int schoolModuleId)
     {
         var schoolModule = await _context.SchoolModules
             .AsTracking()
-            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolCode == schoolCode);
 
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
@@ -208,11 +208,11 @@ public class SchoolModuleController : ControllerBase
     /// </summary>
     [HttpPost("{schoolModuleId:int}/teacher")]
     public async Task<ActionResult<TeacherAssignmentDto>> AssignTeacher(
-        int schoolId, int schoolModuleId, [FromBody] AssignTeacherRequest request)
+        string schoolCode, int schoolModuleId, [FromBody] AssignTeacherRequest request)
     {
         var schoolModule = await _context.SchoolModules
             .Include(sm => sm.Module)
-            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+            .FirstOrDefaultAsync(sm => sm.Id == schoolModuleId && sm.SchoolCode == schoolCode);
 
         if (schoolModule == null)
             return NotFound(new { message = "School module not found" });
@@ -221,7 +221,7 @@ public class SchoolModuleController : ControllerBase
             return BadRequest(new { message = "This module does not support teacher assignment" });
 
         var teacherInSchool = await _context.Set<PersonnelSchoolAssignment>()
-            .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolId == schoolId);
+            .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolCode == schoolCode);
         if (!teacherInSchool)
             return BadRequest(new { message = "Teacher is not assigned to this school" });
 
@@ -248,7 +248,7 @@ public class SchoolModuleController : ControllerBase
 
         var teacherName = (teacher.TitlePrefix?.NameTh ?? "") + teacher.FirstName + " " + teacher.LastName;
 
-        return CreatedAtAction(nameof(GetSchoolModules), new { schoolId },
+        return CreatedAtAction(nameof(GetSchoolModules), new { schoolCode },
             new TeacherAssignmentDto(assignment.Id, teacher.Id, teacherName, true, assignment.AssignedAt));
     }
 
@@ -257,10 +257,10 @@ public class SchoolModuleController : ControllerBase
     /// </summary>
     [HttpGet("{schoolModuleId:int}/teacher")]
     public async Task<ActionResult<IEnumerable<TeacherAssignmentDto>>> GetTeacherAssignments(
-        int schoolId, int schoolModuleId)
+        string schoolCode, int schoolModuleId)
     {
         var exists = await _context.SchoolModules
-            .AnyAsync(sm => sm.Id == schoolModuleId && sm.SchoolId == schoolId);
+            .AnyAsync(sm => sm.Id == schoolModuleId && sm.SchoolCode == schoolCode);
         if (!exists)
             return NotFound(new { message = "School module not found" });
 
@@ -284,14 +284,14 @@ public class SchoolModuleController : ControllerBase
     /// Remove a teacher from a school module.
     /// </summary>
     [HttpDelete("{schoolModuleId:int}/teacher/{assignmentId:int}")]
-    public async Task<ActionResult> RemoveTeacher(int schoolId, int schoolModuleId, int assignmentId)
+    public async Task<ActionResult> RemoveTeacher(string schoolCode, int schoolModuleId, int assignmentId)
     {
         var assignment = await _context.Set<TeacherModuleAssignment>()
             .AsTracking()
             .FirstOrDefaultAsync(ta =>
                 ta.Id == assignmentId
                 && ta.SchoolModuleId == schoolModuleId
-                && ta.SchoolModule.SchoolId == schoolId);
+                && ta.SchoolModule.SchoolCode == schoolCode);
 
         if (assignment == null)
             return NotFound(new { message = "Teacher assignment not found" });
@@ -306,7 +306,7 @@ public class SchoolModuleController : ControllerBase
 // --- DTOs ---
 
 public record SchoolModuleDto(
-    int Id, int SchoolId, int ModuleId,
+    int Id, string SchoolCode, int ModuleId,
     string ModuleCode, string ModuleName, string? ModuleDescription,
     string? ModuleIcon, string ModuleCategory, string? ModuleVersion,
     string? ModuleRoutePath,

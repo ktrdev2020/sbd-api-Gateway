@@ -47,7 +47,8 @@ public class AiProxyController : ControllerBase
             ?? string.Empty;
 
         // Enrich with claims from the already-validated token (Gateway auth middleware validated it)
-        var schoolIdClaim = User.FindFirst("school_id")?.Value;
+        var schoolCodeClaim = User.FindFirst("school_code")?.Value
+            ?? User.FindFirst("school_id")?.Value;
         var areaIdClaim = User.FindFirst("area_id")?.Value;
         var role = User.FindFirst(ClaimTypes.Role)?.Value
             ?? User.FindFirst("role")?.Value
@@ -58,8 +59,7 @@ public class AiProxyController : ControllerBase
             request.Intent,
             request.AdditionalContext,
             UserJwt = rawJwt,
-            SchoolId = request.SchoolId
-                ?? (int.TryParse(schoolIdClaim, out var sid) ? sid : (int?)null),
+            SchoolCode = request.SchoolCode ?? schoolCodeClaim,
             AreaId = request.AreaId
                 ?? (int.TryParse(areaIdClaim, out var aid) ? aid : (int?)null),
             Role = role,
@@ -71,7 +71,7 @@ public class AiProxyController : ControllerBase
 
         _logger.LogInformation(
             "[AiProxy] Assist request — role:{Role} school:{School} area:{Area} intent:{Intent}",
-            role, enriched.SchoolId, enriched.AreaId, request.Intent);
+            role, enriched.SchoolCode, enriched.AreaId, request.Intent);
 
         var client = _factory.CreateClient();
         var body = new StringContent(
@@ -108,7 +108,8 @@ public class AiProxyController : ControllerBase
             .FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase)
             ?? string.Empty;
 
-        var schoolIdClaim = User.FindFirst("school_id")?.Value;
+        var schoolCodeClaim = User.FindFirst("school_code")?.Value
+            ?? User.FindFirst("school_id")?.Value;
         var areaIdClaim = User.FindFirst("area_id")?.Value;
         var role = User.FindFirst(ClaimTypes.Role)?.Value
             ?? User.FindFirst("role")?.Value
@@ -119,8 +120,7 @@ public class AiProxyController : ControllerBase
             request.Intent,
             request.AdditionalContext,
             UserJwt = rawJwt,
-            SchoolId = request.SchoolId
-                ?? (int.TryParse(schoolIdClaim, out var sid) ? sid : (int?)null),
+            SchoolCode = request.SchoolCode ?? schoolCodeClaim,
             AreaId = request.AreaId
                 ?? (int.TryParse(areaIdClaim, out var aid) ? aid : (int?)null),
             Role = role,
@@ -247,7 +247,7 @@ public class AiProxyController : ControllerBase
 public record AiAssistRequest(
     string Intent,
     string? AdditionalContext = null,
-    int? SchoolId = null,
+    string? SchoolCode = null,
     int? AreaId = null,
     int? TeacherId = null,
     int? StudentId = null,

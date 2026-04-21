@@ -54,27 +54,27 @@ public class UserMenuController : ControllerBase
 
             case "SchoolAdmin":
             {
-                var schoolId = await GetUserSchoolId(userId);
-                modules = schoolId.HasValue
-                    ? await GetSchoolInstalledModules(schoolId.Value)
+                var schoolCode = await GetUserSchoolCode(userId);
+                modules = !string.IsNullOrEmpty(schoolCode)
+                    ? await GetSchoolInstalledModules(schoolCode)
                     : await GetModulesByVisibility("school");
                 break;
             }
 
             case "Teacher":
             {
-                var schoolId = await GetUserSchoolId(userId);
-                modules = schoolId.HasValue
-                    ? await GetTeacherModules(userId, schoolId.Value)
+                var schoolCode = await GetUserSchoolCode(userId);
+                modules = !string.IsNullOrEmpty(schoolCode)
+                    ? await GetTeacherModules(userId, schoolCode)
                     : await GetModulesByVisibility("teacher");
                 break;
             }
 
             case "Student":
             {
-                var schoolId = await GetStudentSchoolId(userId);
-                modules = schoolId.HasValue
-                    ? await GetStudentModules(userId, schoolId.Value)
+                var schoolCode = await GetStudentSchoolCode(userId);
+                modules = !string.IsNullOrEmpty(schoolCode)
+                    ? await GetStudentModules(userId, schoolCode)
                     : await GetModulesByVisibility("student");
                 break;
             }
@@ -110,16 +110,16 @@ public class UserMenuController : ControllerBase
             .FirstOrDefaultAsync();
     }
 
-    private async Task<int?> GetUserSchoolId(int userId)
+    private async Task<string?> GetUserSchoolCode(int userId)
     {
-        // First try UserRole scope
+        // First try UserRole scope (Option A: int ScopeId → stringify to SchoolCode)
         var scopeSchoolId = await _db.Set<UserRole>()
             .Where(ur => ur.UserId == userId && ur.ScopeType == "School")
             .Select(ur => ur.ScopeId)
             .FirstOrDefaultAsync();
-        if (scopeSchoolId.HasValue) return scopeSchoolId;
+        if (scopeSchoolId.HasValue) return scopeSchoolId.Value.ToString();
 
-        // Fallback: Personnel → PersonnelSchoolAssignment
+        // Fallback: Personnel → PersonnelSchoolAssignment (SchoolCode is already string)
         var user = await _db.Users
             .AsNoTracking()
             .Include(u => u.Personnel)
@@ -129,18 +129,18 @@ public class UserMenuController : ControllerBase
 
         return await _db.Set<PersonnelSchoolAssignment>()
             .Where(psa => psa.PersonnelId == user.Personnel.Id && psa.IsPrimary)
-            .Select(psa => (int?)psa.SchoolId)
+            .Select(psa => psa.SchoolCode)
             .FirstOrDefaultAsync();
     }
 
-    private async Task<int?> GetStudentSchoolId(int userId)
+    private async Task<string?> GetStudentSchoolCode(int userId)
     {
-        // Student's school from UserRole scope
+        // Student's school from UserRole scope (Option A: int ScopeId → SchoolCode)
         var scopeSchoolId = await _db.Set<UserRole>()
             .Where(ur => ur.UserId == userId && ur.ScopeType == "School")
             .Select(ur => ur.ScopeId)
             .FirstOrDefaultAsync();
-        return scopeSchoolId;
+        return scopeSchoolId.HasValue ? scopeSchoolId.Value.ToString() : null;
     }
 
     // -------------------------------------------------------------------------
@@ -190,11 +190,11 @@ public class UserMenuController : ControllerBase
     }
 
     /// <summary>SchoolAdmin: feature modules installed in their school (excludes Core category).</summary>
-    private async Task<List<UserMenuItemDto>> GetSchoolInstalledModules(int schoolId)
+    private async Task<List<UserMenuItemDto>> GetSchoolInstalledModules(string schoolCode)
     {
         return await _db.SchoolModules
             .AsNoTracking()
-            .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
+            .Where(sm => sm.SchoolCode == schoolCode && sm.IsEnabled)
             .Include(sm => sm.Module)
             .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core")
             .OrderBy(sm => sm.Module.SortOrder)
@@ -206,7 +206,7 @@ public class UserMenuController : ControllerBase
     /// Teacher: school installed modules that are visible to teachers.
     /// For modules with AssignableToTeacher, only show if teacher is assigned.
     /// </summary>
-    private async Task<List<UserMenuItemDto>> GetTeacherModules(int userId, int schoolId)
+    private async Task<List<UserMenuItemDto>> GetTeacherModules(int userId, string schoolCode)
     {
         // Get personnel ID for this user
         var personnelId = await _db.Users
@@ -226,7 +226,7 @@ public class UserMenuController : ControllerBase
         // School feature modules visible to teacher (Core category excluded)
         var schoolModules = await _db.SchoolModules
             .AsNoTracking()
-            .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
+            .Where(sm => sm.SchoolCode == schoolCode && sm.IsEnabled)
             .Include(sm => sm.Module)
             .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core" && sm.Module.VisibilityLevels.Contains("teacher"))
             .OrderBy(sm => sm.Module.SortOrder)
@@ -245,7 +245,7 @@ public class UserMenuController : ControllerBase
     /// Student: school installed modules visible to students.
     /// For modules with AssignableToStudent, only show if student is assigned.
     /// </summary>
-    private async Task<List<UserMenuItemDto>> GetStudentModules(int userId, int schoolId)
+    private async Task<List<UserMenuItemDto>> GetStudentModules(int userId, string schoolCode)
     {
         // Get student profile ID — students might have a StudentProfile linked via UserRole scope
         var studentProfileId = await _db.Set<UserRole>()
@@ -264,7 +264,7 @@ public class UserMenuController : ControllerBase
         // School feature modules visible to student (Core category excluded)
         var schoolModules = await _db.SchoolModules
             .AsNoTracking()
-            .Where(sm => sm.SchoolId == schoolId && sm.IsEnabled)
+            .Where(sm => sm.SchoolCode == schoolCode && sm.IsEnabled)
             .Include(sm => sm.Module)
             .Where(sm => sm.Module.IsEnabled && sm.Module.Category != "Core" && sm.Module.VisibilityLevels.Contains("student"))
             .OrderBy(sm => sm.Module.SortOrder)

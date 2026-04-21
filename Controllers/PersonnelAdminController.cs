@@ -42,9 +42,9 @@ public class PersonnelAdminController(
 
     private static string ListCacheKey(
         string scopeTag, string? search, string? type, string? status,
-        string? subjectArea, int? schoolId, int page, int pageSize)
+        string? subjectArea, string? schoolCode, int page, int pageSize)
     {
-        var raw  = $"{scopeTag}|{search}|{type}|{status}|{subjectArea}|{schoolId}|{page}|{pageSize}";
+        var raw  = $"{scopeTag}|{search}|{type}|{status}|{subjectArea}|{schoolCode}|{page}|{pageSize}";
         var hash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..16];
         return $"{ListPrefix}{hash}";
     }
@@ -53,15 +53,15 @@ public class PersonnelAdminController(
     private record CallerScope(
         string Role,
         int? AreaId,
-        int? SchoolId,
-        IReadOnlyList<int> AllowedSchoolIds,
+        string? SchoolCode,
+        IReadOnlyList<string> AllowedSchoolCodes,
         string CacheTag,
         bool CanMutate = true);
 
     private async Task<CallerScope?> GetCallerScopeAsync(bool readOnly = false, CancellationToken ct = default)
     {
         if (User.IsInRole("super_admin") || User.IsInRole("SuperAdmin"))
-            return new CallerScope("super_admin", null, null, Array.Empty<int>(), "global");
+            return new CallerScope("super_admin", null, null, Array.Empty<string>(), "global");
 
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         if (!int.TryParse(userIdStr, out var userId)) return null;
@@ -78,12 +78,12 @@ public class PersonnelAdminController(
         if (areaRole is not null)
         {
             var areaId   = areaRole.ScopeId!.Value;
-            var schoolIds = await db.Schools
+            var schoolCodes = await db.Schools
                 .AsNoTracking()
                 .Where(s => s.AreaId == areaId)
-                .Select(s => s.Id)
+                .Select(s => s.SchoolCode)
                 .ToListAsync(ct);
-            return new CallerScope("area_admin", areaId, null, schoolIds, $"area:{areaId}");
+            return new CallerScope("area_admin", areaId, null, schoolCodes, $"area:{areaId}");
         }
 
         // school_admin — 3-tier policy check for "personnel.manage_school_personnel"
@@ -97,10 +97,12 @@ public class PersonnelAdminController(
 
         if (schoolRole is not null)
         {
-            var schoolId = schoolRole.ScopeId!.Value;
+            // Option A: polymorphic int ScopeId → string SchoolCode
+            var scopeIdInt = schoolRole.ScopeId!.Value;
+            var schoolCode = scopeIdInt.ToString();
             var school   = await db.Schools.AsNoTracking()
-                .Select(s => new { s.Id, s.AreaId })
-                .FirstOrDefaultAsync(s => s.Id == schoolId, ct);
+                .Select(s => new { s.SchoolCode, s.AreaId })
+                .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode, ct);
             if (school is null) return null;
 
             const string code = "personnel.manage_school_personnel";
@@ -109,7 +111,7 @@ public class PersonnelAdminController(
             var schoolPolicy = await db.AreaPermissionPolicies
                 .FirstOrDefaultAsync(p =>
                     p.AreaId == school.AreaId
-                    && p.SchoolId == schoolId
+                    && p.SchoolCode == schoolCode
                     && p.PermissionCode == code, ct);
 
             if (schoolPolicy is not null)
@@ -121,13 +123,13 @@ public class PersonnelAdminController(
                 var areaPolicy = await db.AreaPermissionPolicies
                     .FirstOrDefaultAsync(p =>
                         p.AreaId == school.AreaId
-                        && p.SchoolId == null
+                        && p.SchoolCode == null
                         && p.PermissionCode == code, ct);
                 if (areaPolicy is not null) canMutate = areaPolicy.AllowSchoolAdmin;
             }
 
             if (!canMutate && !readOnly) return null;
-            return new CallerScope("school_admin", null, schoolId, new[] { schoolId }, $"school:{schoolId}", canMutate);
+            return new CallerScope("school_admin", null, schoolCode, new[] { schoolCode }, $"school:{schoolCode}", canMutate);
         }
 
         return null;
@@ -136,10 +138,10 @@ public class PersonnelAdminController(
     private static IQueryable<Personnel> ApplyScopeFilter(IQueryable<Personnel> q, CallerScope scope)
     {
         if (scope.Role == "super_admin") return q;
-        if (scope.AllowedSchoolIds.Count == 0) return q.Where(_ => false);
+        if (scope.AllowedSchoolCodes.Count == 0) return q.Where(_ => false);
         return q.Where(p =>
             p.SchoolAssignments.Any(sa =>
-                sa.IsPrimary && scope.AllowedSchoolIds.Contains(sa.SchoolId)));
+                sa.IsPrimary && scope.AllowedSchoolCodes.Contains(sa.SchoolCode)));
     }
 
     // ─── Cache helpers ────────────────────────────────────────────────────────
@@ -172,7 +174,7 @@ public class PersonnelAdminController(
         [FromQuery] string? type,          // PersonnelType filter
         [FromQuery] string? status,        // AffiliationStatus filter
         [FromQuery] string? subjectArea,
-        [FromQuery] int?    schoolId,
+        [FromQuery] string? schoolCode,
         [FromQuery] int     page     = 1,
         [FromQuery] int     pageSize = 30,
         CancellationToken   ct = default)
@@ -180,9 +182,9 @@ public class PersonnelAdminController(
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
-        if (scope.Role == "school_admin") schoolId = scope.SchoolId;
+        if (scope.Role == "school_admin") schoolCode = scope.SchoolCode;
 
-        var cacheKey = ListCacheKey(scope.CacheTag, search, type, status, subjectArea, schoolId, page, pageSize);
+        var cacheKey = ListCacheKey(scope.CacheTag, search, type, status, subjectArea, schoolCode, page, pageSize);
         var cached   = await TryGetCache<object>(cacheKey);
         if (cached is not null) return Ok(cached);
 
@@ -220,8 +222,8 @@ public class PersonnelAdminController(
         if (!string.IsNullOrWhiteSpace(subjectArea))
             q = q.Where(p => p.SubjectAreaNav != null && p.SubjectAreaNav.NameTh == subjectArea);
 
-        if (schoolId.HasValue)
-            q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolId == schoolId.Value && sa.IsPrimary));
+        if (!string.IsNullOrWhiteSpace(schoolCode))
+            q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolCode == schoolCode && sa.IsPrimary));
 
         var total = await q.CountAsync(ct);
         var items = await q
@@ -260,9 +262,12 @@ public class PersonnelAdminController(
                     .FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
-                    .Select(sa => new { sa.SchoolId, NameTh = sa.School.NameTh, sa.SpecialRoleType })
+                    .Select(sa => new { sa.SchoolCode, NameTh = sa.School.NameTh, sa.SpecialRoleType })
                     .FirstOrDefault(),
                 p.UserId,
+                PhotoThumbnailUrl = p.Photo != null
+                    ? p.Photo.Replace("/main.webp", "/main_thumb.webp")
+                    : null,
                 p.UpdatedAt,
             })
             .ToListAsync(ct);
@@ -307,10 +312,10 @@ public class PersonnelAdminController(
             bySchool = await db.Personnel.AsNoTracking()
                 .Where(p => p.AffiliationStatus == "affiliated")
                 .SelectMany(p => p.SchoolAssignments.Where(sa => sa.IsPrimary))
-                .GroupBy(sa => new { sa.SchoolId, sa.School.NameTh })
+                .GroupBy(sa => new { sa.SchoolCode, sa.School.NameTh })
                 .Select(g => new
                 {
-                    g.Key.SchoolId,
+                    g.Key.SchoolCode,
                     SchoolName  = g.Key.NameTh,
                     Count       = g.Count(),
                     WithAccount = g.Count(sa => sa.Personnel.UserId != null),
@@ -330,7 +335,7 @@ public class PersonnelAdminController(
     [HttpGet("trash")]
     [Authorize(Roles = "super_admin,area_admin,SuperAdmin,AreaAdmin")]
     public async Task<IActionResult> GetTrash(
-        [FromQuery] int? schoolId,
+        [FromQuery] string? schoolCode,
         CancellationToken ct = default)
     {
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
@@ -343,8 +348,8 @@ public class PersonnelAdminController(
 
         q = ApplyScopeFilter(q, scope);
 
-        if (schoolId.HasValue)
-            q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolId == schoolId.Value));
+        if (!string.IsNullOrWhiteSpace(schoolCode))
+            q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolCode == schoolCode));
 
         var items = await q
             .OrderByDescending(p => p.TrashedAt)
@@ -361,7 +366,7 @@ public class PersonnelAdminController(
                 p.UserId,
                 LastSchool = p.SchoolAssignments
                     .OrderByDescending(sa => sa.EndDate)
-                    .Select(sa => new { sa.SchoolId, sa.School.NameTh })
+                    .Select(sa => new { sa.SchoolCode, sa.School.NameTh })
                     .FirstOrDefault(),
             })
             .ToListAsync(ct);
@@ -377,8 +382,8 @@ public class PersonnelAdminController(
     {
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope?.Role is "super_admin" or "area_admin")
-            return Ok(new { canManage = true, schoolId = scope.SchoolId });
-        return Ok(new { canManage = scope?.CanMutate ?? false, schoolId = scope?.SchoolId });
+            return Ok(new { canManage = true, schoolCode = scope.SchoolCode });
+        return Ok(new { canManage = scope?.CanMutate ?? false, schoolCode = scope?.SchoolCode });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -393,14 +398,14 @@ public class PersonnelAdminController(
             return Ok(new { specialRoleType = "none", hasDeputy = false });
 
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
-        if (scope?.SchoolId is null)
+        if (scope?.SchoolCode is null)
             return Ok(new { specialRoleType = "none", hasDeputy = false });
 
         // Current user's special role
         var myAssignment = await db.PersonnelSchoolAssignments
             .AsNoTracking()
             .Include(sa => sa.Personnel)
-            .Where(sa => sa.SchoolId == scope.SchoolId
+            .Where(sa => sa.SchoolCode == scope.SchoolCode
                 && sa.IsPrimary
                 && sa.Personnel.UserId == userId)
             .Select(sa => sa.SpecialRoleType)
@@ -410,7 +415,7 @@ public class PersonnelAdminController(
         var hasDeputy = await db.PersonnelSchoolAssignments
             .AsNoTracking()
             .AnyAsync(sa =>
-                sa.SchoolId == scope.SchoolId
+                sa.SchoolCode == scope.SchoolCode
                 && sa.IsPrimary
                 && (sa.SpecialRoleType == "deputy_director" || sa.SpecialRoleType == "acting_deputy"), ct);
 
@@ -455,8 +460,8 @@ public class PersonnelAdminController(
         // Scope check
         if (scope.Role != "super_admin")
         {
-            var schoolIds = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.SchoolId).ToList();
-            if (!schoolIds.Any(s => scope.AllowedSchoolIds.Contains(s))) return Forbid();
+            var schoolIds = p.SchoolAssignments.Where(sa => sa.IsPrimary).Select(sa => sa.SchoolCode).ToList();
+            if (!schoolIds.Any(s => scope.AllowedSchoolCodes.Contains(s))) return Forbid();
         }
 
         var primarySa = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
@@ -503,14 +508,14 @@ public class PersonnelAdminController(
             SalaryLevel      = primarySa?.SalaryLevelNav?.NameTh ?? primarySa?.SalaryLevel,
             PrimarySchool = primarySa is null ? null : new
             {
-                primarySa.SchoolId,
+                primarySa.SchoolCode,
                 NameTh          = primarySa.School.NameTh,
                 primarySa.SpecialRoleType,
             },
             Schools = p.SchoolAssignments.Select(sa => new
             {
                 sa.Id,
-                sa.SchoolId,
+                sa.SchoolCode,
                 SchoolName = sa.School.NameTh,
                 PositionTypeId = sa.PositionTypeId,
                 Position = sa.PositionTypeNav?.NameTh ?? sa.Position,
@@ -594,7 +599,7 @@ public class PersonnelAdminController(
                 match.LastName,
                 PrimarySchool = match.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
-                    .Select(sa => new { sa.SchoolId, sa.School.NameTh })
+                    .Select(sa => new { sa.SchoolCode, sa.School.NameTh })
                     .FirstOrDefault(),
                 match.UserId,
             }
@@ -614,11 +619,11 @@ public class PersonnelAdminController(
         if (scope is null) return Forbid();
 
         // Enforce school context
-        var targetSchoolId = scope.Role == "school_admin"
-            ? scope.SchoolId!.Value
-            : req.SchoolId ?? throw new ArgumentException("schoolId required");
+        var targetSchoolCode = scope.Role == "school_admin"
+            ? scope.SchoolCode!
+            : req.SchoolCode ?? throw new ArgumentException("schoolCode required");
 
-        if (scope.Role != "super_admin" && !scope.AllowedSchoolIds.Contains(targetSchoolId))
+        if (scope.Role != "super_admin" && !scope.AllowedSchoolCodes.Contains(targetSchoolCode))
             return Forbid();
 
         // Duplicate check
@@ -721,7 +726,7 @@ public class PersonnelAdminController(
         db.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
         {
             PersonnelId     = personnel.Id,
-            SchoolId        = targetSchoolId,
+            SchoolCode      = targetSchoolCode,
             IsPrimary       = true,
             Position        = req.PositionType,
             AcademicRank    = req.AcademicRank,
@@ -743,7 +748,7 @@ public class PersonnelAdminController(
                 FirstName         = personnel.FirstName,
                 LastName          = personnel.LastName,
                 PersonnelType     = req.PersonnelType ?? "",
-                SchoolId          = targetSchoolId,
+                SchoolCode        = targetSchoolCode,
                 RequestedByUserId = requestedBy,
             }, ct);
         }
@@ -873,6 +878,7 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.LineId,           req.LineId           ?? p.LineId)
                 .SetProperty(x => x.Facebook,         req.Facebook         ?? p.Facebook)
                 .SetProperty(x => x.Telegram,         req.Telegram         ?? p.Telegram)
+                .SetProperty(x => x.Photo,            req.Photo            ?? p.Photo)
                 .SetProperty(x => x.UpdatedAt,        now)
                 .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
@@ -955,7 +961,7 @@ public class PersonnelAdminController(
         int.TryParse(userIdStr, out var requestedBy);
 
         var primaryAssignment = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
-        var previousSchoolId  = primaryAssignment?.SchoolId ?? 0;
+        var previousSchoolCode  = primaryAssignment?.SchoolCode ?? "";
 
         if (primaryAssignment is not null)
         {
@@ -974,11 +980,11 @@ public class PersonnelAdminController(
 
         await bus.Publish(new PersonnelUnaffiliatedEvent
         {
-            PersonnelId       = id,
-            PreviousSchoolId  = previousSchoolId,
-            UserId            = p.UserId,
-            RequestedByUserId = requestedBy,
-            OccurredAt        = DateTimeOffset.UtcNow,
+            PersonnelId         = id,
+            PreviousSchoolCode  = previousSchoolCode,
+            UserId              = p.UserId,
+            RequestedByUserId   = requestedBy,
+            OccurredAt          = DateTimeOffset.UtcNow,
         }, ct);
 
         await cache.RemoveAsync(DetailKey(id));
@@ -998,7 +1004,7 @@ public class PersonnelAdminController(
     {
         var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return Forbid();
-        if (scope.Role != "super_admin" && !scope.AllowedSchoolIds.Contains(req.SchoolId))
+        if (scope.Role != "super_admin" && !scope.AllowedSchoolCodes.Contains(req.SchoolCode))
             return Forbid();
 
         var p = await db.Personnel
@@ -1015,7 +1021,7 @@ public class PersonnelAdminController(
         db.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
         {
             PersonnelId     = id,
-            SchoolId        = req.SchoolId,
+            SchoolCode      = req.SchoolCode,
             IsPrimary       = true,
             Position        = req.Position,
             AcademicRank    = req.AcademicRank,
@@ -1035,7 +1041,7 @@ public class PersonnelAdminController(
         await db.SaveChangesAsync(ct);
         await cache.RemoveAsync(DetailKey(id));
         await TryInvalidateListAndStats(scope.CacheTag);
-        return Ok(new { id, status = "affiliated", schoolId = req.SchoolId });
+        return Ok(new { id, status = "affiliated", schoolCode = req.SchoolCode });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1061,8 +1067,8 @@ public class PersonnelAdminController(
 
         var school = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
         var areaId = school is not null
-            ? (await db.Schools.AsNoTracking().Select(s => new { s.Id, s.AreaId })
-                .FirstOrDefaultAsync(s => s.Id == school.SchoolId, ct))?.AreaId ?? 0
+            ? (await db.Schools.AsNoTracking().Select(s => new { s.SchoolCode, s.AreaId })
+                .FirstOrDefaultAsync(s => s.SchoolCode == school.SchoolCode, ct))?.AreaId ?? 0
             : 0;
 
         var now = DateTimeOffset.UtcNow;
@@ -1120,7 +1126,7 @@ public class PersonnelAdminController(
         {
             var isInScope = await db.PersonnelSchoolAssignments
                 .AnyAsync(sa => sa.PersonnelId == id
-                    && scope.AllowedSchoolIds.Contains(sa.SchoolId), ct);
+                    && scope.AllowedSchoolCodes.Contains(sa.SchoolCode), ct);
             if (!isInScope) return Forbid();
         }
 
@@ -1261,14 +1267,14 @@ public class PersonnelAdminController(
     // GET /api/v1/admin/personnel/cycles
     [HttpGet("cycles")]
     public async Task<IActionResult> GetCycles(
-        [FromQuery] int? schoolId,
+        [FromQuery] string? schoolCode,
         [FromQuery] int? academicYearId,
         CancellationToken ct = default)
     {
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
-        if (scope.Role == "school_admin") schoolId = scope.SchoolId;
+        if (scope.Role == "school_admin") schoolCode = scope.SchoolCode;
 
         var q = db.PersonnelApprovalCycles
             .AsNoTracking()
@@ -1277,9 +1283,9 @@ public class PersonnelAdminController(
             .AsQueryable();
 
         if (scope.Role != "super_admin")
-            q = q.Where(c => scope.AllowedSchoolIds.Contains(c.SchoolId));
+            q = q.Where(c => scope.AllowedSchoolCodes.Contains(c.SchoolCode));
 
-        if (schoolId.HasValue) q = q.Where(c => c.SchoolId == schoolId.Value);
+        if (!string.IsNullOrWhiteSpace(schoolCode)) q = q.Where(c => c.SchoolCode == schoolCode);
         if (academicYearId.HasValue) q = q.Where(c => c.AcademicYearId == academicYearId.Value);
 
         var cycles = await q
@@ -1287,7 +1293,7 @@ public class PersonnelAdminController(
             .Select(c => new
             {
                 c.Id,
-                c.SchoolId,
+                c.SchoolCode,
                 SchoolName = c.School.NameTh,
                 c.AcademicYearId,
                 AcademicYear = c.AcademicYear.Year,
@@ -1314,7 +1320,7 @@ public class PersonnelAdminController(
         var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return Forbid();
 
-        var cycle = await GetOrCreateCycleAsync(req.SchoolId, req.AcademicYearId, ct);
+        var cycle = await GetOrCreateCycleAsync(req.SchoolCode, req.AcademicYearId, ct);
         if (cycle.Status != "open" && cycle.Status != "reopened")
             return BadRequest(new { error = $"ไม่สามารถส่งได้ สถานะปัจจุบัน: {cycle.Status}" });
 
@@ -1326,7 +1332,7 @@ public class PersonnelAdminController(
         // Determine if this school has a deputy director → go to deputy_review first
         var hasDeputy = await db.PersonnelSchoolAssignments
             .AnyAsync(sa =>
-                sa.SchoolId == req.SchoolId
+                sa.SchoolCode == req.SchoolCode
                 && sa.IsPrimary
                 && (sa.SpecialRoleType == "deputy_director" || sa.SpecialRoleType == "acting_deputy"), ct);
 
@@ -1442,17 +1448,17 @@ public class PersonnelAdminController(
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private async Task<PersonnelApprovalCycle> GetOrCreateCycleAsync(
-        int schoolId, int academicYearId, CancellationToken ct)
+        string schoolCode, int academicYearId, CancellationToken ct)
     {
         var cycle = await db.PersonnelApprovalCycles
             .FirstOrDefaultAsync(c =>
-                c.SchoolId == schoolId && c.AcademicYearId == academicYearId, ct);
+                c.SchoolCode == schoolCode && c.AcademicYearId == academicYearId, ct);
 
         if (cycle is null)
         {
             cycle = new PersonnelApprovalCycle
             {
-                SchoolId       = schoolId,
+                SchoolCode     = schoolCode,
                 AcademicYearId = academicYearId,
                 Status         = "open",
                 OpenedAt       = DateTimeOffset.UtcNow,
@@ -1474,7 +1480,7 @@ public class PersonnelAdminController(
         await bus.Publish(new PersonnelApprovalAdvancedEvent
         {
             CycleId          = cycle.Id,
-            SchoolId         = cycle.SchoolId,
+            SchoolCode       = cycle.SchoolCode,
             AcademicYearId   = cycle.AcademicYearId,
             NewStatus        = cycle.Status,
             PreviousStatus   = previousStatus,
@@ -1495,10 +1501,10 @@ public class PersonnelAdminController(
             var schoolIds = await db.PersonnelSchoolAssignments
                 .AsNoTracking()
                 .Where(sa => sa.PersonnelId == personnelId && sa.IsPrimary)
-                .Select(sa => sa.SchoolId)
+                .Select(sa => sa.SchoolCode)
                 .ToListAsync(ct);
 
-            if (!schoolIds.Any(s => scope.AllowedSchoolIds.Contains(s)))
+            if (!schoolIds.Any(s => scope.AllowedSchoolCodes.Contains(s)))
                 return (null, Forbid());
         }
 
@@ -1537,7 +1543,7 @@ public class PersonnelAdminCreateRequest
     public string?  AcademicRank     { get; set; }  // วิทยฐานะ plain text
     public int?     SalaryLevelId    { get; set; }  // FK → SalaryLevels — preferred
     public string?  SalaryLevel      { get; set; }  // plain text fallback (legacy)
-    public int?     SchoolId         { get; set; }
+    public string?  SchoolCode       { get; set; }
     public string?  SpecialRoleType  { get; set; }  // none|acting_director|deputy_director
     public string?  StartDate        { get; set; }  // ISO date
 }
@@ -1568,6 +1574,7 @@ public class PersonnelAdminUpdateRequest
     public int?     SalaryLevelId           { get; set; }  // FK → SalaryLevels — preferred
     public string?  SalaryLevel             { get; set; }  // plain text fallback (legacy)
     public string?  SpecialRoleType         { get; set; }
+    public string?  Photo                   { get; set; }  // avatar main URL from FileService
 }
 
 public class PersonnelEducationUpsertRequest
@@ -1580,12 +1587,12 @@ public class PersonnelEducationUpsertRequest
 }
 
 public record AssignToSchoolRequest(
-    int       SchoolId,
+    string    SchoolCode,
     string?   Position,
     string?   AcademicRank,
     int?      SalaryLevelId,
     string?   SalaryLevel,
     string?   SpecialRoleType);
 
-public record CycleActionRequest(int SchoolId, int AcademicYearId);
+public record CycleActionRequest(string SchoolCode, int AcademicYearId);
 public record ReopenRequest(string? Note);

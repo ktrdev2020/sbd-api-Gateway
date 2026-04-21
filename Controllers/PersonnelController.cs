@@ -24,7 +24,7 @@ public class AreaPersonnelController : ControllerBase
     [HttpGet]
     public async Task<ActionResult> GetAll(
         int areaId,
-        [FromQuery] int? schoolId,
+        [FromQuery] string? schoolCode,
         [FromQuery] string? type,
         [FromQuery] string? scope,
         [FromQuery] string? search,
@@ -47,7 +47,7 @@ public class AreaPersonnelController : ControllerBase
         if (scope == "school")
         {
             query = query.Where(p =>
-                p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolId > 0));
+                p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolCode != null && a.SchoolCode != ""));
         }
         else if (scope == "area")
         {
@@ -55,10 +55,10 @@ public class AreaPersonnelController : ControllerBase
         }
 
         // Filter by specific school
-        if (schoolId.HasValue)
+        if (!string.IsNullOrWhiteSpace(schoolCode))
         {
             query = query.Where(p =>
-                p.SchoolAssignments.Any(a => a.SchoolId == schoolId.Value && a.IsPrimary));
+                p.SchoolAssignments.Any(a => a.SchoolCode == schoolCode && a.IsPrimary));
         }
 
         // Filter by personnel type (by code)
@@ -103,9 +103,9 @@ public class AreaPersonnelController : ControllerBase
                     .Where(a => a.IsPrimary)
                     .Select(a => a.AcademicRank)
                     .FirstOrDefault(),
-                SchoolId = p.SchoolAssignments
+                SchoolCode = p.SchoolAssignments
                     .Where(a => a.IsPrimary)
-                    .Select(a => (int?)a.SchoolId)
+                    .Select(a => a.SchoolCode)
                     .FirstOrDefault(),
                 SchoolName = p.SchoolAssignments
                     .Where(a => a.IsPrimary)
@@ -149,7 +149,7 @@ public class AreaPersonnelController : ControllerBase
             p.Phone, p.Email, p.LineId, p.Photo,
             Assignments = p.SchoolAssignments.Select(a => new
             {
-                a.Id, a.SchoolId, SchoolName = a.School.NameTh,
+                a.Id, a.SchoolCode, SchoolName = a.School.NameTh,
                 a.Position, a.AcademicRank, a.SalaryLevel,
                 a.IsPrimary, a.StartDate, a.EndDate
             }),
@@ -193,13 +193,13 @@ public class AreaPersonnelController : ControllerBase
         _context.Personnel.Add(person);
         await _context.SaveChangesAsync();
 
-        // Create school assignment if schoolId provided
-        if (request.SchoolId.HasValue)
+        // Create school assignment if schoolCode provided
+        if (!string.IsNullOrWhiteSpace(request.SchoolCode))
         {
             _context.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
             {
                 PersonnelId = person.Id,
-                SchoolId = request.SchoolId.Value,
+                SchoolCode = request.SchoolCode,
                 Position = request.Position,
                 AcademicRank = request.AcademicRank,
                 IsPrimary = true,
@@ -247,15 +247,15 @@ public class AreaPersonnelController : ControllerBase
 
     /// <summary>Get area-level summary stats.</summary>
     [HttpGet("summary")]
-    public async Task<ActionResult> GetSummary(int areaId, [FromQuery] int? schoolId)
+    public async Task<ActionResult> GetSummary(int areaId, [FromQuery] string? schoolCode)
     {
         var query = _context.PersonnelSchoolAssignments
             .Where(a => a.IsPrimary && (a.EndDate == null || a.EndDate >= DateOnly.FromDateTime(DateTime.Today)))
             .Where(a => a.School.AreaId == areaId)
             .AsQueryable();
 
-        if (schoolId.HasValue)
-            query = query.Where(a => a.SchoolId == schoolId.Value);
+        if (!string.IsNullOrWhiteSpace(schoolCode))
+            query = query.Where(a => a.SchoolCode == schoolCode);
 
         var assignments = await query
             .Include(a => a.Personnel).ThenInclude(p => p.PersonnelTypeNav)
@@ -295,7 +295,7 @@ public class PersonnelListItemDto
     public string? Photo { get; set; }
     public string? Position { get; set; }
     public string? AcademicRank { get; set; }
-    public int? SchoolId { get; set; }
+    public string? SchoolCode { get; set; }
     public string? SchoolName { get; set; }
 }
 
@@ -305,7 +305,7 @@ public record CreatePersonnelRequest(
     int? TitlePrefixId = null, string? IdCard = null,
     DateOnly? BirthDate = null, string? Phone = null,
     string? Email = null, string? LineId = null,
-    int? SchoolId = null, string? Position = null,
+    string? SchoolCode = null, string? Position = null,
     string? AcademicRank = null,
     int? SubjectAreaId = null, int? SpecialtyId = null
 );
