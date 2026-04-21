@@ -582,7 +582,7 @@ using (var scope = app.Services.CreateScope())
         --   principal_review -> locked -> area_accepted  (reopen -> open)
         CREATE TABLE IF NOT EXISTS ""PersonnelApprovalCycles"" (
             ""Id""                       SERIAL PRIMARY KEY,
-            ""SchoolId""                 INTEGER NOT NULL REFERENCES ""Schools""(""Id"") ON DELETE CASCADE,
+            ""SchoolCode""               VARCHAR(10) NOT NULL REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE,
             ""AcademicYearId""           INTEGER NOT NULL REFERENCES ""AcademicYears""(""Id"") ON DELETE RESTRICT,
             ""Status""                   VARCHAR(30) NOT NULL DEFAULT 'open',
             ""OpenedAt""                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -597,10 +597,10 @@ using (var scope = app.Services.CreateScope())
             ""ReopenedAt""               TIMESTAMPTZ NULL,
             ""ReopenedByUserId""         INTEGER NULL,
             ""ReopenNote""              TEXT NULL,
-            UNIQUE (""SchoolId"", ""AcademicYearId"")
+            UNIQUE (""SchoolCode"", ""AcademicYearId"")
         );
-        CREATE INDEX IF NOT EXISTS ""IX_PersonnelApprovalCycles_SchoolId""
-            ON ""PersonnelApprovalCycles"" (""SchoolId"");
+        CREATE INDEX IF NOT EXISTS ""IX_PersonnelApprovalCycles_SchoolCode""
+            ON ""PersonnelApprovalCycles"" (""SchoolCode"");
         CREATE INDEX IF NOT EXISTS ""IX_PersonnelApprovalCycles_Status""
             ON ""PersonnelApprovalCycles"" (""Status"");
 
@@ -839,7 +839,7 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""PersonnelId""        INTEGER REFERENCES ""Personnel""(""Id"") ON DELETE RESTRICT;
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""StudentCode""         VARCHAR(50);
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""Status""              VARCHAR(30) NOT NULL DEFAULT 'active';
-        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""SchoolId""            INTEGER REFERENCES ""Schools""(""Id"") ON DELETE RESTRICT;
+        ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""SchoolCode""          VARCHAR(10) REFERENCES ""Schools""(""SchoolCode"") ON DELETE RESTRICT;
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""EnrollYear""          INTEGER;
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""GraduateYear""        INTEGER;
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""GradeLevel""          VARCHAR(20);
@@ -857,7 +857,7 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE ""StudentProfiles"" ADD COLUMN IF NOT EXISTS ""UpdatedAt""           TIMESTAMPTZ;
         CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_StudentCode"" ON ""StudentProfiles"" (""StudentCode"") WHERE ""StudentCode"" IS NOT NULL;
         CREATE UNIQUE INDEX IF NOT EXISTS ""UX_StudentProfiles_PersonnelId"" ON ""StudentProfiles"" (""PersonnelId"") WHERE ""PersonnelId"" IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_SchoolId"" ON ""StudentProfiles"" (""SchoolId"");
+        CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_SchoolCode"" ON ""StudentProfiles"" (""SchoolCode"");
         CREATE INDEX IF NOT EXISTS ""IX_StudentProfiles_Status"" ON ""StudentProfiles"" (""Status"");
 
         -- StudentAcademics (academic records per year+semester)
