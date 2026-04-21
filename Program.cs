@@ -5,6 +5,7 @@ using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Minio;
 using Npgsql;
 using SBD.Infrastructure.Data;
 using SBD.ServiceRegistry;
@@ -78,12 +79,30 @@ builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 // Phase B.4: capability grant lookup with Redis cache (cap_v keyed)
 builder.Services.AddScoped<Gateway.Services.ICapabilityService, Gateway.Services.CapabilityService>();
 
+// MinIO (for DMC CSV uploads)
+var minioEndpoint = builder.Configuration["MinIO:Endpoint"] ?? "localhost:9000";
+var minioAccessKey = builder.Configuration["MinIO:AccessKey"] ?? "admin";
+var minioSecretKey = builder.Configuration["MinIO:SecretKey"] ?? "password";
+var minioUseSsl = builder.Configuration.GetValue<bool?>("MinIO:UseSSL") ?? false;
+builder.Services.AddSingleton<IMinioClient>(_ =>
+{
+    var client = new MinioClient()
+        .WithEndpoint(minioEndpoint)
+        .WithCredentials(minioAccessKey, minioSecretKey);
+    if (minioUseSsl) client = client.WithSSL();
+    return client.Build();
+});
+
+// DMC import job writer (student-db, cross-bounded-context)
+builder.Services.AddScoped<IDmcJobService, NpgsqlDmcJobService>();
+
 // Add MassTransit with RabbitMQ
 builder.Services.AddMassTransit(x =>
 {
     // Consumers
     x.AddConsumer<Gateway.Consumers.SchoolLogoUpdatedConsumer>();
     x.AddConsumer<Gateway.Consumers.CacheInvalidateConsumer>();
+    x.AddConsumer<Gateway.Consumers.SchoolInfoRequestedConsumer>();
 
     x.UsingRabbitMq((context, cfg) =>
     {
