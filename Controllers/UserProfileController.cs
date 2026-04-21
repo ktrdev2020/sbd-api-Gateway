@@ -46,6 +46,11 @@ public class UserProfileController : ControllerBase
         var schoolRole = user.UserRoles.FirstOrDefault(ur =>
             ur.ScopeType == "School" && ur.ScopeId.HasValue);
 
+        // Option A: polymorphic int ScopeId stringifies back to 10-digit SchoolCode.
+        // Dual emit during school-pk-migration (T6): SchoolCode is the new canonical
+        // field; SchoolId kept for backward compat with consumers on older frontend.
+        var schoolCodeStr = schoolRole?.ScopeId?.ToString();
+
         return Ok(new UserProfileDto(
             Id: user.Id.ToString(),
             Username: user.Username,
@@ -54,7 +59,8 @@ public class UserProfileController : ControllerBase
             Roles: roles,
             ActiveRole: activeRole,
             AreaId: areaRole?.ScopeId?.ToString(),
-            SchoolId: schoolRole?.ScopeId?.ToString(),
+            SchoolId: schoolCodeStr,
+            SchoolCode: schoolCodeStr,
             Provider: user.LoginProviders.FirstOrDefault()?.Provider ?? "local"
         ));
     }
@@ -69,5 +75,6 @@ public record UserProfileDto(
     string ActiveRole,
     string? AreaId,
     string? SchoolId,
+    string? SchoolCode,
     string Provider
 );
