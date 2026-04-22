@@ -47,6 +47,7 @@ public class SchoolInfoRequestedConsumer : IConsumer<SchoolInfoRequestedEvent>
 
         await _publish.Publish(new SchoolInfoResponseEvent(
             req.CorrelationId,
+            req.SchoolCode,
             school.SchoolCode,
             syntheticId,
             school.NameTh,
