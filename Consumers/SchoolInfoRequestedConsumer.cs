@@ -27,7 +27,7 @@ public class SchoolInfoRequestedConsumer : IConsumer<SchoolInfoRequestedEvent>
         var req = context.Message;
         var school = await _db.Schools
             .AsNoTracking()
-            .Where(s => s.SchoolCode == req.SchoolCode && s.DeletedAt == null)
+            .Where(s => (s.SchoolCode == req.SchoolCode || s.SmisCode == req.SchoolCode) && s.DeletedAt == null)
             .Select(s => new { s.SchoolCode, s.NameTh, s.NameEn, s.AreaId, s.SchoolLevelId, s.Principal, s.IsActive })
             .FirstOrDefaultAsync(context.CancellationToken);
 
