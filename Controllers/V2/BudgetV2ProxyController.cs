@@ -4,11 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace Gateway.Controllers.V2;
 
 /// <summary>
-/// Thin proxy forwarding <c>/api/v2/budget/*</c> calls to BudgetApi.
+/// Thin catch-all proxy forwarding every <c>/api/v2/budget/*</c> call to BudgetApi.
 /// JWT + Content-Type passthrough; BudgetApi enforces scope filtering
-/// (defense-in-depth). Expanded per T8 session:
-///   - session-1: lookups (6 read-only endpoints)
-///   - session-2+: planning / activity / forms-docs-inbox
+/// (defense-in-depth). Single catchall route keeps proxy surface maintenance-free
+/// as T8 sessions add new endpoints — no Gateway change needed per session.
 /// Pattern-copy of <see cref="AplanProxyController"/>.
 /// </summary>
 [ApiController]
@@ -35,33 +34,14 @@ public class BudgetV2ProxyController : ControllerBase
         ?? Environment.GetEnvironmentVariable("BUDGET_API_URL")
         ?? "http://localhost:5040";
 
-    // ---------- Lookups (T8 session-1) ----------
-
-    [HttpGet("lookups/funding-tiers")]
-    public Task<IActionResult> LookupFundingTiers(CancellationToken ct)
-        => Forward(HttpMethod.Get, "/api/v2/budget/lookups/funding-tiers", ct);
-
-    [HttpGet("lookups/fund-sources")]
-    public Task<IActionResult> LookupFundSources(CancellationToken ct)
-        => Forward(HttpMethod.Get, "/api/v2/budget/lookups/fund-sources", ct);
-
-    [HttpGet("lookups/subsidy-categories")]
-    public Task<IActionResult> LookupSubsidyCategories(CancellationToken ct)
-        => Forward(HttpMethod.Get, "/api/v2/budget/lookups/subsidy-categories", ct);
-
-    [HttpGet("lookups/budget-buckets")]
-    public Task<IActionResult> LookupBudgetBuckets(CancellationToken ct)
-        => Forward(HttpMethod.Get, "/api/v2/budget/lookups/budget-buckets", ct);
-
-    [HttpGet("lookups/std-dimensions")]
-    public Task<IActionResult> LookupStdDimensions(CancellationToken ct)
-        => Forward(HttpMethod.Get, $"/api/v2/budget/lookups/std-dimensions{Request.QueryString}", ct);
-
-    [HttpGet("lookups/standards")]
-    public Task<IActionResult> LookupStandards(CancellationToken ct)
-        => Forward(HttpMethod.Get, $"/api/v2/budget/lookups/standards{Request.QueryString}", ct);
-
-    // ---------- Forward helper ----------
+    [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH")]
+    [Route("{**path}")]
+    public Task<IActionResult> Passthrough([FromRoute] string path, CancellationToken ct)
+    {
+        var method = HttpMethod.Parse(Request.Method);
+        var target = $"/api/v2/budget/{path}{Request.QueryString}";
+        return Forward(method, target, ct);
+    }
 
     private async Task<IActionResult> Forward(HttpMethod method, string path, CancellationToken ct)
     {
