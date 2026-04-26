@@ -255,6 +255,21 @@ public class RefDataController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("school-levels")]
+    public async Task<ActionResult> GetSchoolLevels()
+    {
+        const string cacheKey = "refdata:school-levels";
+        var cached = await _cache.GetAsync<List<SchoolLevel>>(cacheKey);
+        if (cached is { Count: > 0 })
+            return Ok(cached);
+
+        var data = await _context.SchoolLevels.AsNoTracking()
+            .OrderBy(s => s.SortOrder)
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
+
     [HttpGet("fiscal-years")]
     public async Task<ActionResult> GetFiscalYears()
     {
