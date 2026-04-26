@@ -1017,6 +1017,7 @@ using (var scope = app.Services.CreateScope())
         ('Teacher','dashboard','หน้าหลัก','fas fa-home','{{basePath}}',1,TRUE,TRUE,NULL),
         ('Teacher','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('Teacher','my-modules','โมดูลของฉัน','fas fa-puzzle-piece','{{basePath}}/my-modules',3,TRUE,FALSE,NULL),
+        ('Teacher','aplan','แผนปฏิบัติการ','fas fa-clipboard-list','{{basePath}}/aplan',4,TRUE,FALSE,NULL),
         ('Student','dashboard','หน้าหลัก','fas fa-home','{{basePath}}',1,TRUE,TRUE,NULL),
         ('Student','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('Student','grades','ผลการเรียน','fas fa-star','{{basePath}}/grades',3,TRUE,FALSE,NULL),
