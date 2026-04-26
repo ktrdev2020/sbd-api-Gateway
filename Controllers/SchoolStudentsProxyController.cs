@@ -40,6 +40,15 @@ public class SchoolStudentsProxyController : ControllerBase
     public Task<IActionResult> List([FromRoute] string schoolCode, CancellationToken ct)
         => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students{Request.QueryString}", ct);
 
+    /// <summary>
+    /// Per-tier student count for a school × academic year (T16 of
+    /// aplan-school-fiscal-flow). Forwarded to StudentApi where the
+    /// aggregation lives.
+    /// </summary>
+    [HttpGet("count-by-tier")]
+    public Task<IActionResult> CountByTier([FromRoute] string schoolCode, CancellationToken ct)
+        => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students/count-by-tier{Request.QueryString}", ct);
+
     [HttpGet("{studentId:long}")]
     public Task<IActionResult> Get([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
         => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students/{studentId}", ct);
