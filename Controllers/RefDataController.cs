@@ -255,6 +255,30 @@ public class RefDataController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("fiscal-years")]
+    public async Task<ActionResult> GetFiscalYears()
+    {
+        const string cacheKey = "refdata:fiscal-years";
+        var cached = await _cache.GetAsync<List<FiscalYearDto>>(cacheKey);
+        if (cached is { Count: > 0 })
+            return Ok(cached);
+
+        var data = await _context.FiscalYears.AsNoTracking()
+            .Where(f => f.IsActive)
+            .OrderByDescending(f => f.Year)
+            .Select(f => new FiscalYearDto
+            {
+                Id        = f.Year,
+                Label     = f.NameTh,
+                StartDate = f.StartDate,
+                EndDate   = f.EndDate,
+                IsActive  = f.IsActive,
+            })
+            .ToListAsync();
+        await _cache.SetAsync(cacheKey, data, _cacheExpiration);
+        return Ok(data);
+    }
+
     [HttpGet("subject-areas")]
     public async Task<ActionResult> GetSubjectAreas()
     {
@@ -311,4 +335,18 @@ public record EducationLevelDto(
 {
     // Parameterless ctor required for JSON deserialization from Redis
     public EducationLevelDto() : this(0, "", "", null, 0, true) { }
+}
+
+/// <summary>
+/// Projection for FiscalYear — `Id` = ปี พ.ศ. (e.g. 2569) per D2 of aplan-school-fiscal-flow plan.
+/// Source field is entity.Year; Gateway DB internal Id (surrogate) is hidden from API to keep
+/// BudgetApi cross-DB references readable. Label = "ปีงบประมาณ 2569".
+/// </summary>
+public class FiscalYearDto
+{
+    public int      Id        { get; set; }
+    public string   Label     { get; set; } = "";
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate   { get; set; }
+    public bool     IsActive  { get; set; }
 }
