@@ -6,11 +6,8 @@ namespace Gateway.Controllers;
 /// <summary>
 /// Thin proxy forwarding <c>/api/v1/school/{schoolCode}/students/*</c>
 /// calls to StudentApi. Covers the SchoolAdmin CRUD surface plus the
-/// 3 transfer operations (class/in/out). Preserves JWT + Content-Type on
-/// forwarded requests.
-///
-/// Bulk-promote remains out of scope — requires a WorkerService orchestrator
-/// with SignalR progress phases, tracked separately in the plan.
+/// 3 transfer operations (class/in/out) and the bulk-promote end-of-year
+/// wizard endpoint. Preserves JWT + Content-Type on forwarded requests.
 /// </summary>
 [ApiController]
 [Route("api/v1/school/{schoolCode}/students")]
@@ -76,6 +73,16 @@ public class SchoolStudentsProxyController : ControllerBase
     [HttpPost("{studentId:long}/transfer-out")]
     public Task<IActionResult> TransferOut([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
         => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/{studentId}/transfer-out", ct);
+
+    /// <summary>
+    /// End-of-year wizard. Forwards the request body verbatim to StudentApi
+    /// which publishes a <c>BulkPromoteStudentsCommand</c> to RabbitMQ.
+    /// Frontend gets a 202 + JobId immediately and subscribes to SignalR
+    /// for progress events on group <c>school:&lt;code&gt;</c>.
+    /// </summary>
+    [HttpPost("bulk-promote")]
+    public Task<IActionResult> BulkPromote([FromRoute] string schoolCode, CancellationToken ct)
+        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/bulk-promote", ct);
 
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string path, CancellationToken ct)
     {
