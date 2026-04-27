@@ -1134,6 +1134,27 @@ using (var scope = app.Services.CreateScope())
         }
     }
 
+    // ── Plan #1 T2 — Students module capability seed ──────────────────────────
+    // The authz_capability_definitions table was created in Phase B.1 (line ~647)
+    // but stayed empty until now. Slice 2 (AreaAdmin overview · already shipped)
+    // and slice 3 (SchoolAdmin CRUD · in progress) need these rows so the
+    // SchoolStudentsController + AreaStudentsProxyController capability
+    // middleware checks have something to validate against. Idempotent —
+    // ON CONFLICT DO NOTHING guards re-runs.
+    await db.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO ""authz_capability_definitions""
+            (""Code"", ""Module"", ""Resource"", ""Action"", ""NameTh"", ""Description"", ""DefaultScope"", ""IsRedelegatable"", ""MaxDelegationDepth"", ""IsDangerous"", ""RequiresApproval"", ""IsActive"")
+        VALUES
+            ('school:students:manage',         'students', 'school-students', 'manage',         'จัดการนักเรียนของโรงเรียน',         'เพิ่ม/แก้ไข/ลบนักเรียน · ย้ายห้อง · ย้ายเข้า/ออกระหว่างเทอม',  'school', TRUE,  3, FALSE, FALSE, TRUE),
+            ('school:students:bulk-promote',   'students', 'school-students', 'bulk-promote',   'เลื่อนชั้นอัตโนมัติ',                'เลื่อนชั้นนักเรียนทั้งโรงเรียนเมื่อขึ้นปีการศึกษาใหม่',         'school', TRUE,  3, TRUE,  FALSE, TRUE),
+            ('school:students:transfer-in',    'students', 'school-students', 'transfer-in',    'รับย้ายนักเรียนเข้าโรงเรียน',         'รับนักเรียนย้ายมาจากโรงเรียนอื่น',                              'school', TRUE,  3, FALSE, FALSE, TRUE),
+            ('school:students:transfer-out',   'students', 'school-students', 'transfer-out',   'ส่งย้ายนักเรียนออกโรงเรียน',         'ส่งนักเรียนย้ายไปโรงเรียนอื่น',                                'school', TRUE,  3, FALSE, FALSE, TRUE),
+            ('school:students:edit-sensitive', 'students', 'school-students', 'edit-sensitive', 'แก้ไขข้อมูลที่ละเอียดอ่อน',           'แก้เลขประจำตัวประชาชน · ต้องผ่านการอนุมัติของเขต',              'school', FALSE, 1, TRUE,  TRUE,  TRUE),
+            ('area:students:view',             'students', 'area-students',   'view',           'ดูภาพรวมนักเรียนในเขต',              'ภาพรวมสถิตินักเรียนทั้งเขตและรายชื่อแบบอ่านอย่างเดียว',         'area',   TRUE,  2, FALSE, FALSE, TRUE)
+        ON CONFLICT (""Code"") DO NOTHING;
+    ");
+    Console.WriteLine("[Seed] Students module capabilities ensured (school:students:* + area:students:view).");
+
     // Seed schools from สพป.ศรีสะเกษ เขต 3
     await Gateway.SchoolSeedData.SeedAsync(db);
 
