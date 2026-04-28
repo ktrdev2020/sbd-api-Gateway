@@ -56,6 +56,14 @@ public class AreaStudentsProxyController : ControllerBase
     /// If caller did not supply schoolCodes, auto-inject the set owned by this
     /// area (Gateway is the source of truth for area→schools). This keeps
     /// StudentApi free of cross-bounded-context queries.
+    ///
+    /// **DMC SmisCode bridge** (2026-04-28): StudentDB stores `school_code`
+    /// as DMC SmisCode (8-digit, e.g. `33030001`) because the DMC importer
+    /// keyed on the SmisCode column from the source CSV. Gateway is canonical
+    /// on OBEC SchoolCode (10-digit, e.g. `1033530251`). To match, this proxy
+    /// injects the SmisCode set for the area instead of SchoolCode. Schools
+    /// with null SmisCode are filtered (so manually-entered test schools
+    /// without a DMC mapping still fall through cleanly).
     /// </summary>
     private async Task<string> EnsureSchoolCodesAsync(long areaId, CancellationToken ct)
     {
@@ -64,8 +72,8 @@ public class AreaStudentsProxyController : ControllerBase
             return Request.QueryString.ToString();
 
         var codes = await _db.Schools.AsNoTracking()
-            .Where(s => s.AreaId == areaId && s.IsActive && s.DeletedAt == null)
-            .Select(s => s.SchoolCode)
+            .Where(s => s.AreaId == areaId && s.IsActive && s.DeletedAt == null && s.SmisCode != null)
+            .Select(s => s.SmisCode!)
             .ToListAsync(ct);
 
         var baseQuery = Request.QueryString.HasValue

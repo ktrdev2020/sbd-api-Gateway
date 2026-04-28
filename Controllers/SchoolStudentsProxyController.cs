@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SBD.Infrastructure.Data;
 
 namespace Gateway.Controllers;
 
@@ -8,6 +10,14 @@ namespace Gateway.Controllers;
 /// calls to StudentApi. Covers the SchoolAdmin CRUD surface plus the
 /// 3 transfer operations (class/in/out) and the bulk-promote end-of-year
 /// wizard endpoint. Preserves JWT + Content-Type on forwarded requests.
+///
+/// **DMC SmisCode bridge** (2026-04-28): incoming `schoolCode` is OBEC
+/// 10-digit (Gateway PK), but StudentApi stores `school_code` as DMC SmisCode
+/// 8-digit (legacy from DMC importer). This proxy translates OBEC →
+/// SmisCode once via Gateway DB lookup, then forwards using SmisCode in the
+/// URL path. Requests for schools without a SmisCode mapping (e.g. manually
+/// created in Gateway, no DMC import) fall through with the original code —
+/// StudentApi simply returns empty results, which is correct.
 /// </summary>
 [ApiController]
 [Route("api/v1/school/{schoolCode}/students")]
@@ -16,16 +26,32 @@ public class SchoolStudentsProxyController : ControllerBase
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly IConfiguration _config;
+    private readonly SbdDbContext _db;
     private readonly ILogger<SchoolStudentsProxyController> _logger;
 
     public SchoolStudentsProxyController(
         IHttpClientFactory httpFactory,
         IConfiguration config,
+        SbdDbContext db,
         ILogger<SchoolStudentsProxyController> logger)
     {
         _httpFactory = httpFactory;
         _config = config;
+        _db = db;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Resolve the OBEC SchoolCode to its DMC SmisCode. Falls back to the
+    /// original code if no mapping exists (e.g. manually-created schools).
+    /// </summary>
+    private async Task<string> ResolveSmisAsync(string schoolCode, CancellationToken ct)
+    {
+        var smis = await _db.Schools.AsNoTracking()
+            .Where(s => s.SchoolCode == schoolCode)
+            .Select(s => s.SmisCode)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(smis) ? schoolCode : smis;
     }
 
     private string StudentApiBase =>
@@ -34,8 +60,11 @@ public class SchoolStudentsProxyController : ControllerBase
         ?? "http://localhost:5032";
 
     [HttpGet]
-    public Task<IActionResult> List([FromRoute] string schoolCode, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students{Request.QueryString}", ct);
+    public async Task<IActionResult> List([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students{Request.QueryString}", ct);
+    }
 
     /// <summary>
     /// Per-tier student count for a school × academic year (T16 of
@@ -43,36 +72,60 @@ public class SchoolStudentsProxyController : ControllerBase
     /// aggregation lives.
     /// </summary>
     [HttpGet("count-by-tier")]
-    public Task<IActionResult> CountByTier([FromRoute] string schoolCode, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students/count-by-tier{Request.QueryString}", ct);
+    public async Task<IActionResult> CountByTier([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/count-by-tier{Request.QueryString}", ct);
+    }
 
     [HttpGet("{studentId:long}")]
-    public Task<IActionResult> Get([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Get, $"/api/v1/school/{schoolCode}/students/{studentId}", ct);
+    public async Task<IActionResult> Get([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/{studentId}", ct);
+    }
 
     [HttpPost]
-    public Task<IActionResult> Create([FromRoute] string schoolCode, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students", ct);
+    public async Task<IActionResult> Create([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students", ct);
+    }
 
     [HttpPatch("{studentId:long}")]
-    public Task<IActionResult> Update([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Patch, $"/api/v1/school/{schoolCode}/students/{studentId}", ct);
+    public async Task<IActionResult> Update([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Patch, $"/api/v1/school/{smis}/students/{studentId}", ct);
+    }
 
     [HttpDelete("{studentId:long}")]
-    public Task<IActionResult> Deactivate([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Delete, $"/api/v1/school/{schoolCode}/students/{studentId}", ct);
+    public async Task<IActionResult> Deactivate([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Delete, $"/api/v1/school/{smis}/students/{studentId}", ct);
+    }
 
     [HttpPost("{studentId:long}/transfer-class")]
-    public Task<IActionResult> TransferClass([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/{studentId}/transfer-class", ct);
+    public async Task<IActionResult> TransferClass([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students/{studentId}/transfer-class", ct);
+    }
 
     [HttpPost("transfer-in")]
-    public Task<IActionResult> TransferIn([FromRoute] string schoolCode, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/transfer-in", ct);
+    public async Task<IActionResult> TransferIn([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students/transfer-in", ct);
+    }
 
     [HttpPost("{studentId:long}/transfer-out")]
-    public Task<IActionResult> TransferOut([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/{studentId}/transfer-out", ct);
+    public async Task<IActionResult> TransferOut([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students/{studentId}/transfer-out", ct);
+    }
 
     /// <summary>
     /// End-of-year wizard. Forwards the request body verbatim to StudentApi
@@ -81,8 +134,11 @@ public class SchoolStudentsProxyController : ControllerBase
     /// for progress events on group <c>school:&lt;code&gt;</c>.
     /// </summary>
     [HttpPost("bulk-promote")]
-    public Task<IActionResult> BulkPromote([FromRoute] string schoolCode, CancellationToken ct)
-        => ForwardAsync(HttpMethod.Post, $"/api/v1/school/{schoolCode}/students/bulk-promote", ct);
+    public async Task<IActionResult> BulkPromote([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students/bulk-promote", ct);
+    }
 
     private async Task<IActionResult> ForwardAsync(HttpMethod method, string path, CancellationToken ct)
     {
