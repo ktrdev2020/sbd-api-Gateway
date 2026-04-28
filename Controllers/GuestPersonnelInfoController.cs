@@ -184,7 +184,7 @@ public class GuestPersonnelInfoController : ControllerBase
 
     /// <summary>Paginated public list of teachers + directors.</summary>
     [HttpGet("teachers")]
-    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new[] { "offset", "limit", "q" })]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
     public async Task<ActionResult> GetTeachers(
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 50,
