@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -42,7 +44,54 @@ public class AreaStudentsProxyController : ControllerBase
     public async Task<IActionResult> GetOverview([FromRoute] long areaId, CancellationToken ct)
     {
         var query = await EnsureSchoolCodesAsync(areaId, ct);
-        return await ForwardGetAsync($"/api/v1/area/{areaId}/students/overview{query}", ct);
+        var (status, body, contentType) = await ForwardRawAsync($"/api/v1/area/{areaId}/students/overview{query}", ct);
+        if (status >= 200 && status < 300 && body.TrimStart().StartsWith('{'))
+            body = await EnrichBySchoolNamesAsync(areaId, body, ct);
+        return new ContentResult { StatusCode = status, Content = body, ContentType = contentType };
+    }
+
+    /// <summary>
+    /// Enrich the StudentApi overview JSON's <c>bySchool</c> array with
+    /// <c>schoolName</c> by looking up Gateway's Schools master via SmisCode.
+    /// Bounded-context honors: only the proxy joins across domains.
+    /// </summary>
+    private async Task<string> EnrichBySchoolNamesAsync(long areaId, string body, CancellationToken ct)
+    {
+        try
+        {
+            var node = JsonNode.Parse(body);
+            var arr = node?["bySchool"]?.AsArray();
+            if (arr is null || arr.Count == 0) return body;
+
+            // Build SmisCode → SchoolName map for this area. AsNoTracking + ToDict.
+            var nameBySmis = await _db.Schools.AsNoTracking()
+                .Where(s => s.AreaId == areaId && s.SmisCode != null)
+                .Select(s => new { s.SmisCode, s.SchoolCode, s.NameTh })
+                .ToDictionaryAsync(s => s.SmisCode!, s => new { s.SchoolCode, s.NameTh }, ct);
+
+            foreach (var item in arr)
+            {
+                var smis = item?["schoolCode"]?.GetValue<string>();
+                if (smis is null) continue;
+                if (nameBySmis.TryGetValue(smis, out var info))
+                {
+                    item!["schoolName"] = info.NameTh;
+                    item!["obecSchoolCode"] = info.SchoolCode; // keep both codes for the frontend
+                }
+                else
+                {
+                    item!["schoolName"] = null;
+                    item!["obecSchoolCode"] = null;
+                }
+            }
+
+            return node!.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to enrich bySchool with names — returning raw");
+            return body;
+        }
     }
 
     [HttpGet]
@@ -84,12 +133,17 @@ public class AreaStudentsProxyController : ControllerBase
 
     private async Task<IActionResult> ForwardGetAsync(string path, CancellationToken ct)
     {
+        var (status, body, contentType) = await ForwardRawAsync(path, ct);
+        return new ContentResult { StatusCode = status, Content = body, ContentType = contentType };
+    }
+
+    private async Task<(int status, string body, string contentType)> ForwardRawAsync(string path, CancellationToken ct)
+    {
         var http = _httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(30);
 
         var req = new HttpRequestMessage(HttpMethod.Get, StudentApiBase + path);
 
-        // Preserve JWT so StudentApi's [Authorize] can validate
         if (Request.Headers.TryGetValue("Authorization", out var auth))
             req.Headers.TryAddWithoutValidation("Authorization", auth.ToString());
 
@@ -98,17 +152,12 @@ public class AreaStudentsProxyController : ControllerBase
             using var response = await http.SendAsync(req, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
-            return new ContentResult
-            {
-                StatusCode = (int)response.StatusCode,
-                Content = body,
-                ContentType = contentType,
-            };
+            return ((int)response.StatusCode, body, contentType);
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "StudentApi proxy failed for {Path}", path);
-            return StatusCode(502, new { error = "StudentApi ไม่ตอบสนอง" });
+            return (502, "{\"error\":\"StudentApi ไม่ตอบสนอง\"}", "application/json");
         }
     }
 }
