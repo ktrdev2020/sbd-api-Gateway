@@ -69,13 +69,35 @@ public class SchoolStudentsProxyController : ControllerBase
     /// <summary>
     /// Per-tier student count for a school × academic year (T16 of
     /// aplan-school-fiscal-flow). Forwarded to StudentApi where the
-    /// aggregation lives.
+    /// aggregation lives. Plan #4 T5 added optional `?term=` for per-round dispatch.
     /// </summary>
     [HttpGet("count-by-tier")]
     public async Task<IActionResult> CountByTier([FromRoute] string schoolCode, CancellationToken ct)
     {
         var smis = await ResolveSmisAsync(schoolCode, ct);
         return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/count-by-tier{Request.QueryString}", ct);
+    }
+
+    /// <summary>
+    /// Plan #4 T5 — DMC-flagged poor student count per tier · drives BASIC_FUND_POOR
+    /// budget calc (PER_INDIVIDUAL_DMC pattern). Requires explicit `?academicYear=&term=`.
+    /// </summary>
+    [HttpGet("poverty-count")]
+    public async Task<IActionResult> PovertyCount([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/poverty-count{Request.QueryString}", ct);
+    }
+
+    /// <summary>
+    /// Plan #4 T5 — กสศ. CCT-approved student count per tier · drives BASIC_FUND_POOR_SPECIAL
+    /// budget calc (PER_INDIVIDUAL_CCT pattern). Requires explicit `?academicYear=&term=`.
+    /// </summary>
+    [HttpGet("cct-by-tier")]
+    public async Task<IActionResult> CctByTier([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/cct-by-tier{Request.QueryString}", ct);
     }
 
     [HttpGet("{studentId:long}")]
