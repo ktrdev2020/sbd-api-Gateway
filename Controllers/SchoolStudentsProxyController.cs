@@ -90,6 +90,17 @@ public class SchoolStudentsProxyController : ControllerBase
     }
 
     /// <summary>
+    /// Plan #8 T3 — DRAFT count-by-tier · returns DMC if available, else
+    /// latest-enrollment + grade-bump fallback for "ร่างแผน" mode.
+    /// </summary>
+    [HttpGet("draft-count-by-tier")]
+    public async Task<IActionResult> DraftCountByTier([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/draft-count-by-tier{Request.QueryString}", ct);
+    }
+
+    /// <summary>
     /// Plan #4 T5 — กสศ. CCT-approved student count per tier · drives BASIC_FUND_POOR_SPECIAL
     /// budget calc (PER_INDIVIDUAL_CCT pattern). Requires explicit `?academicYear=&term=`.
     /// </summary>
