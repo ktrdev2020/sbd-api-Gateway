@@ -4,6 +4,13 @@ on:
   push:
     branches: [master]
 
+# Cancel duplicate notify-main runs when commits land back-to-back.
+# Only the latest dispatch fires · main repo CI no longer races to bump
+# pointer to an older SHA. Plan #11 follow-up P3.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   notify:
     runs-on: ubuntu-latest
