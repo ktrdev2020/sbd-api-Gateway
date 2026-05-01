@@ -196,15 +196,21 @@ public class SchoolStudentsProxyController : ControllerBase
 
         try
         {
-            using var response = await http.SendAsync(req, ct);
-            var responseBody = await response.Content.ReadAsStringAsync(ct);
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
-            return new ContentResult
+            // Plan #15 Phase A8 — stream the body to preserve any future
+            // binary downloads (CSV, PDF) on this passthrough path. Avoids
+            // the U+FFFD replacement-char corruption that breaks files when
+            // ReadAsStringAsync UTF-8-decodes non-text content types.
+            var response = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            if (response.Content.Headers.ContentDisposition is { } cd)
             {
-                StatusCode = (int)response.StatusCode,
-                Content = responseBody,
-                ContentType = contentType,
-            };
+                Response.Headers["Content-Disposition"] = cd.ToString();
+            }
+            Response.StatusCode = (int)response.StatusCode;
+            Response.ContentType = contentType;
+            await using var upstream = await response.Content.ReadAsStreamAsync(ct);
+            await upstream.CopyToAsync(Response.Body, ct);
+            return new EmptyResult();
         }
         catch (HttpRequestException ex)
         {

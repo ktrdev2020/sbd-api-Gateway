@@ -321,15 +321,20 @@ public class MePersonnelController : ControllerBase
         }
     }
 
-    private static async Task<IActionResult> ForwardResponse(HttpResponseMessage resp, CancellationToken ct)
+    private async Task<IActionResult> ForwardResponse(HttpResponseMessage resp, CancellationToken ct)
     {
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "application/json";
-        return new ContentResult
+        // Plan #15 Phase A8 — stream the body to preserve binary content
+        // (avoid the U+FFFD replacement-char corruption that bites if a
+        // downstream service ever returns binary on this proxy path).
+        var contentType = resp.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+        if (resp.Content.Headers.ContentDisposition is { } cd)
         {
-            StatusCode = (int)resp.StatusCode,
-            Content = body,
-            ContentType = contentType
-        };
+            Response.Headers["Content-Disposition"] = cd.ToString();
+        }
+        Response.StatusCode = (int)resp.StatusCode;
+        Response.ContentType = contentType;
+        await using var upstream = await resp.Content.ReadAsStreamAsync(ct);
+        await upstream.CopyToAsync(Response.Body, ct);
+        return new EmptyResult();
     }
 }

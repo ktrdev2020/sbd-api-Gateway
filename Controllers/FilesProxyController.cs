@@ -138,13 +138,21 @@ public class FilesProxyController : ControllerBase
 
     private async Task<IActionResult> ForwardResponse(HttpResponseMessage resp, CancellationToken ct)
     {
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "application/json";
-        return new ContentResult
+        // Plan #15 Phase A8 — Stream the response body without UTF-8-decoding
+        // it. The previous implementation called `ReadAsStringAsync` which
+        // corrupts every byte > 0x7F in binary content (PDFs, DOCX, images)
+        // by replacing it with U+FFFD. FilesProxy is the highest-risk caller
+        // because it serves user-uploaded artefacts of arbitrary content type.
+        var contentType = resp.Content.Headers.ContentType?.ToString()
+            ?? "application/octet-stream";
+        if (resp.Content.Headers.ContentDisposition is { } cd)
         {
-            StatusCode = (int)resp.StatusCode,
-            Content = body,
-            ContentType = contentType
-        };
+            Response.Headers["Content-Disposition"] = cd.ToString();
+        }
+        Response.StatusCode = (int)resp.StatusCode;
+        Response.ContentType = contentType;
+        await using var upstream = await resp.Content.ReadAsStreamAsync(ct);
+        await upstream.CopyToAsync(Response.Body, ct);
+        return new EmptyResult();
     }
 }
