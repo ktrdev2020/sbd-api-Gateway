@@ -281,18 +281,37 @@ public class PersonnelAdminController(
     // GET /api/v1/admin/personnel/stats
     // ─────────────────────────────────────────────────────────────────────────
     [HttpGet("stats")]
-    public async Task<IActionResult> GetStats(CancellationToken ct = default)
+    public async Task<IActionResult> GetStats(
+        [FromQuery] string? schoolCode = null,
+        CancellationToken ct = default)
     {
         var scope = await GetCallerScopeAsync(readOnly: true, ct);
         if (scope is null) return Forbid();
 
-        var cacheKey = ScopedStatsKey(scope.CacheTag);
-        var cached   = await TryGetCache<object>(cacheKey);
+        // Plan #19 T4 — when caller is area/super and explicitly asks for a
+        // single school's stats (e.g. SuperAdmin viewing /schools/:code
+        // dashboard), narrow scope to that school. School-admins ignore the
+        // hint — they're already locked to their own school via
+        // ApplyScopeFilter, so the hint can't expand their access.
+        var scopedSchoolCode = !string.IsNullOrWhiteSpace(schoolCode)
+            && scope.Role != "school_admin"
+            ? schoolCode.Trim() : null;
+
+        var cacheKey = scopedSchoolCode is null
+            ? ScopedStatsKey(scope.CacheTag)
+            : ScopedStatsKey($"{scope.CacheTag}:school:{scopedSchoolCode}");
+        var cached = await TryGetCache<object>(cacheKey);
         if (cached is not null) return Ok(cached);
 
         var q = db.Personnel.AsNoTracking()
             .Where(p => p.AffiliationStatus != "trashed");
         q = ApplyScopeFilter(q, scope);
+        if (scopedSchoolCode is not null)
+        {
+            q = q.Where(p =>
+                p.SchoolAssignments.Any(sa =>
+                    sa.IsPrimary && sa.SchoolCode == scopedSchoolCode));
+        }
 
         // byType as Record<string,number>
         var byTypeList = await q.GroupBy(p => p.PersonnelTypeNav.Code)
@@ -305,9 +324,11 @@ public class PersonnelAdminController(
         var unaffiliated = await q.CountAsync(p => p.AffiliationStatus == "unaffiliated", ct);
         var hasAccount   = await q.CountAsync(p => p.UserId != null, ct);
 
-        // Per-school breakdown (for area/super views)
+        // Per-school breakdown (for area/super views) — skipped when caller
+        // narrowed to one school (Plan #19 T4) since the per-school view is
+        // already implied by the schoolCode query param.
         object? bySchool = null;
-        if (scope.Role != "school_admin")
+        if (scope.Role != "school_admin" && scopedSchoolCode is null)
         {
             bySchool = await db.Personnel.AsNoTracking()
                 .Where(p => p.AffiliationStatus == "affiliated")
