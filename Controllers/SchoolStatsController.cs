@@ -128,49 +128,59 @@ public class SchoolStatsController : ControllerBase
     [HttpGet("personnel-type-stats/auto")]
     public async Task<ActionResult<List<PersonnelTypeStatDto>>> AutoFetchPersonnel(string schoolCode)
     {
-        // PersonnelType code → display Thai name (matches DEFAULT_PERSONNEL_TYPE_ROWS in frontend)
-        var typeNameMap = new Dictionary<string, (string name, int order)>
-        {
-            { "Director",       ("ผู้อำนวยการ",      0) },
-            { "Teacher",        ("ครู",             2) },
-            { "GovEmployee",    ("พนักงานราชการ",    3) },
-            { "PermanentStaff", ("ลูกจ้างประจำ",     4) },
-            { "TempStaff",      ("ลูกจ้างชั่วคราว",   5) },
-            { "Staff",          ("ธุรการ",          6) },
-        };
-
-        var rows = await (
+        // Pull raw assignments (PersonnelType code + Position string) so we can
+        // do Position-aware classification — Director code spans both ผอ. and รองผอ.;
+        // Staff code spans ธุรการ / พี่เลี้ยง / นักการภารโรง.
+        var raw = await (
             from psa in _db.Set<SBD.Domain.Entities.PersonnelSchoolAssignment>().AsNoTracking()
             join p in _db.Personnel.AsNoTracking() on psa.PersonnelId equals p.Id
             join pt in _db.Set<SBD.Domain.Entities.PersonnelType>().AsNoTracking() on p.PersonnelTypeId equals pt.Id
             where psa.SchoolCode == schoolCode
               && (psa.EndDate == null || psa.EndDate >= DateOnly.FromDateTime(DateTime.Today))
-            group new { p.Gender } by new { Code = pt.Code } into g
             select new
             {
-                code = g.Key.Code,
-                male = g.Count(x => x.Gender == 'M' || x.Gender == 'm'),
-                female = g.Count(x => x.Gender == 'F' || x.Gender == 'f'),
+                code = pt.Code,
+                position = psa.Position ?? string.Empty,
+                gender = p.Gender,
             }
         ).ToListAsync();
 
-        var result = rows.Select(r =>
+        // Bucket each row → display label + sort order. Matches DEFAULT_PERSONNEL_TYPE_ROWS.
+        static (string name, int order) Classify(string code, string position)
         {
-            (string name, int order) entry = typeNameMap.TryGetValue(r.code, out var v)
-                ? v : (r.code, 99);
-            return new PersonnelTypeStatDto
+            switch (code)
+            {
+                case "Director":
+                    return position.Contains("รอง")
+                        ? ("รองผู้อำนวยการ", 1) : ("ผู้อำนวยการ", 0);
+                case "Teacher":       return ("ครู", 2);
+                case "GovEmployee":   return ("พนักงานราชการ", 3);
+                case "PermanentStaff":return ("ลูกจ้างประจำ", 4);
+                case "TempStaff":     return ("ลูกจ้างชั่วคราว", 5);
+                case "Staff":
+                    if (position.Contains("ธุรการ")) return ("ธุรการ", 6);
+                    if (position.Contains("ภารโรง") || position.Contains("นักการ")) return ("นักการภารโรง", 7);
+                    if (position.Contains("พี่เลี้ยง")) return ("พี่เลี้ยง", 8);
+                    return ("บุคลากรสนับสนุน", 9);
+                default: return (code, 99);
+            }
+        }
+
+        var grouped = raw
+            .Select(r => new { bucket = Classify(r.code, r.position), r.gender })
+            .GroupBy(x => x.bucket)
+            .Select(g => new PersonnelTypeStatDto
             {
                 Id = 0,
-                PersonnelType = entry.name,
-                TypeOrder = entry.order,
-                MaleCount = r.male,
-                FemaleCount = r.female,
-            };
-        })
-        .OrderBy(x => x.TypeOrder)
-        .ToList();
+                PersonnelType = g.Key.name,
+                TypeOrder = g.Key.order,
+                MaleCount = g.Count(x => x.gender == 'M' || x.gender == 'm'),
+                FemaleCount = g.Count(x => x.gender == 'F' || x.gender == 'f'),
+            })
+            .OrderBy(x => x.TypeOrder)
+            .ToList();
 
-        return Ok(result);
+        return Ok(grouped);
     }
 
     private static int CurrentAcademicYear()
