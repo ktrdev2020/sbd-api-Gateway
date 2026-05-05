@@ -3,6 +3,7 @@ using Gateway.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SBD.Infrastructure.Data;
 
 namespace Gateway.Controllers;
 
@@ -17,7 +18,8 @@ public class SchoolStatsController : ControllerBase
 {
     private readonly GatewayDbContext _db;
 
-    public SchoolStatsController(GatewayDbContext db) { _db = db; }
+    // GatewayDbContext is registered as SbdDbContext in DI — cast on constructor.
+    public SchoolStatsController(SbdDbContext db) { _db = (GatewayDbContext)db; }
 
     // ─── Grade Stats (จำนวนนักเรียนแยกระดับชั้น) ─────────────────────────
 
