@@ -118,6 +118,61 @@ public class SchoolStatsController : ControllerBase
         return Ok(newRows.OrderBy(r => r.TypeOrder).Select(MapType).ToList());
     }
 
+    // ─── Plan #26 — Auto-fetch from live source data (Student/Personnel) ──────
+
+    /// <summary>
+    /// Aggregates Personnel × PersonnelType × Gender for active assignments
+    /// at the given school, returning rows ready to populate the editor.
+    /// Personnel data lives in same Gateway DB so query is direct (no proxy).
+    /// </summary>
+    [HttpGet("personnel-type-stats/auto")]
+    public async Task<ActionResult<List<PersonnelTypeStatDto>>> AutoFetchPersonnel(string schoolCode)
+    {
+        // PersonnelType code → display Thai name (matches DEFAULT_PERSONNEL_TYPE_ROWS in frontend)
+        var typeNameMap = new Dictionary<string, (string name, int order)>
+        {
+            { "Director",       ("ผู้อำนวยการ",      0) },
+            { "Teacher",        ("ครู",             2) },
+            { "GovEmployee",    ("พนักงานราชการ",    3) },
+            { "PermanentStaff", ("ลูกจ้างประจำ",     4) },
+            { "TempStaff",      ("ลูกจ้างชั่วคราว",   5) },
+            { "Staff",          ("ธุรการ",          6) },
+        };
+
+        var rows = await (
+            from psa in _db.Set<SBD.Domain.Entities.PersonnelSchoolAssignment>().AsNoTracking()
+            join p in _db.Personnel.AsNoTracking() on psa.PersonnelId equals p.Id
+            join pt in _db.Set<SBD.Domain.Entities.PersonnelType>().AsNoTracking() on p.PersonnelTypeId equals pt.Id
+            where psa.SchoolCode == schoolCode
+              && (psa.EndDate == null || psa.EndDate >= DateOnly.FromDateTime(DateTime.Today))
+            group new { p.Gender } by new { Code = pt.Code } into g
+            select new
+            {
+                code = g.Key.Code,
+                male = g.Count(x => x.Gender == 'M' || x.Gender == 'm'),
+                female = g.Count(x => x.Gender == 'F' || x.Gender == 'f'),
+            }
+        ).ToListAsync();
+
+        var result = rows.Select(r =>
+        {
+            (string name, int order) entry = typeNameMap.TryGetValue(r.code, out var v)
+                ? v : (r.code, 99);
+            return new PersonnelTypeStatDto
+            {
+                Id = 0,
+                PersonnelType = entry.name,
+                TypeOrder = entry.order,
+                MaleCount = r.male,
+                FemaleCount = r.female,
+            };
+        })
+        .OrderBy(x => x.TypeOrder)
+        .ToList();
+
+        return Ok(result);
+    }
+
     private static int CurrentAcademicYear()
     {
         var now = DateTime.Now;

@@ -111,6 +111,17 @@ public class SchoolStudentsProxyController : ControllerBase
         return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/cct-by-tier{Request.QueryString}", ct);
     }
 
+    /// <summary>
+    /// Plan #26 — Per-grade × gender count for school profile auto-populate.
+    /// Forwarded to StudentApi via SmisCode bridge.
+    /// </summary>
+    [HttpGet("count-by-grade-and-gender")]
+    public async Task<IActionResult> CountByGradeAndGender([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/count-by-grade-and-gender{Request.QueryString}", ct);
+    }
+
     [HttpGet("{studentId:long}")]
     public async Task<IActionResult> Get([FromRoute] string schoolCode, [FromRoute] long studentId, CancellationToken ct)
     {
