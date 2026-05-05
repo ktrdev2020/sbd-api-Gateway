@@ -579,6 +579,112 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Gateway shadow properties + academic calendar + Authority A.1 tables ensured.");
 
+    // ── Plan #26 — School Profile Expansion (aplan บทที่ 1-3) ─────────────────
+    // Adds: school history, land area; school_identities + missions/goals/strategies;
+    //       school_grade_stats; school_personnel_type_stats.
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- Schools: profile expansion fields (Plan #26)
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""History"" TEXT;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LandRai"" INTEGER;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LandNgan"" INTEGER;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LandSqwa"" NUMERIC(8,2);
+
+        -- school_identities (วิสัยทัศน์ / ปรัชญา / คำขวัญ / อักษรย่อ / สี / ต้นไม้ / ดอกไม้ / ชุดนักเรียน)
+        CREATE TABLE IF NOT EXISTS school_identities (
+            id BIGSERIAL PRIMARY KEY,
+            school_code VARCHAR(10) NOT NULL,
+            fiscal_year INTEGER NOT NULL,
+            vision TEXT,
+            philosophy TEXT,
+            slogan VARCHAR(255),
+            abbreviation VARCHAR(50),
+            school_colors VARCHAR(255),
+            school_tree VARCHAR(255),
+            school_flower VARCHAR(255),
+            uniform_description TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_school_identities_school_year
+            ON school_identities (school_code, fiscal_year);
+        DO $$ BEGIN
+            ALTER TABLE school_identities
+                ADD CONSTRAINT fk_school_identities_school
+                FOREIGN KEY (school_code) REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- school_missions (พันธกิจ — list per identity)
+        CREATE TABLE IF NOT EXISTS school_missions (
+            id BIGSERIAL PRIMARY KEY,
+            identity_id BIGINT NOT NULL REFERENCES school_identities(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            description TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_missions_identity ON school_missions (identity_id);
+
+        -- school_goals (เป้าประสงค์)
+        CREATE TABLE IF NOT EXISTS school_goals (
+            id BIGSERIAL PRIMARY KEY,
+            identity_id BIGINT NOT NULL REFERENCES school_identities(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            description TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_goals_identity ON school_goals (identity_id);
+
+        -- school_strategies (ยุทธศาสตร์)
+        CREATE TABLE IF NOT EXISTS school_strategies (
+            id BIGSERIAL PRIMARY KEY,
+            identity_id BIGINT NOT NULL REFERENCES school_identities(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            description TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_strategies_identity ON school_strategies (identity_id);
+
+        -- school_grade_stats (จำนวนนักเรียนแยกระดับชั้น × ปีการศึกษา)
+        CREATE TABLE IF NOT EXISTS school_grade_stats (
+            id BIGSERIAL PRIMARY KEY,
+            school_code VARCHAR(10) NOT NULL,
+            academic_year INTEGER NOT NULL,
+            grade VARCHAR(20) NOT NULL,
+            grade_order INTEGER NOT NULL DEFAULT 0,
+            male_count INTEGER NOT NULL DEFAULT 0,
+            female_count INTEGER NOT NULL DEFAULT 0,
+            classroom_count INTEGER,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_school_grade_stats_uq
+            ON school_grade_stats (school_code, academic_year, grade);
+        CREATE INDEX IF NOT EXISTS ix_school_grade_stats_school_year
+            ON school_grade_stats (school_code, academic_year);
+        DO $$ BEGIN
+            ALTER TABLE school_grade_stats
+                ADD CONSTRAINT fk_school_grade_stats_school
+                FOREIGN KEY (school_code) REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- school_personnel_type_stats (จำนวนบุคลากรแยกประเภท × ปีการศึกษา)
+        CREATE TABLE IF NOT EXISTS school_personnel_type_stats (
+            id BIGSERIAL PRIMARY KEY,
+            school_code VARCHAR(10) NOT NULL,
+            academic_year INTEGER NOT NULL,
+            personnel_type VARCHAR(50) NOT NULL,
+            type_order INTEGER NOT NULL DEFAULT 0,
+            male_count INTEGER NOT NULL DEFAULT 0,
+            female_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_school_personnel_stats_uq
+            ON school_personnel_type_stats (school_code, academic_year, personnel_type);
+        CREATE INDEX IF NOT EXISTS ix_school_personnel_stats_school_year
+            ON school_personnel_type_stats (school_code, academic_year);
+        DO $$ BEGIN
+            ALTER TABLE school_personnel_type_stats
+                ADD CONSTRAINT fk_school_personnel_stats_school
+                FOREIGN KEY (school_code) REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    ");
+    Console.WriteLine("[Migration] Plan #26 — School profile expansion (history, land, identity, grade-stats, personnel-stats) ensured.");
+
     // ── Phase A.3 — Personnel Management: approval workflow + secondment ──────
     await db.Database.ExecuteSqlRawAsync(@"
         -- ============================================================================

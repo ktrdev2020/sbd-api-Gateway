@@ -22,9 +22,88 @@ public class GatewayDbContext : SbdDbContext
 
     public DbSet<CacheDefinition> CacheDefinitions => Set<CacheDefinition>();
 
+    // ── Plan #26 — School profile expansion ──
+    public DbSet<SchoolIdentity> SchoolIdentities => Set<SchoolIdentity>();
+    public DbSet<SchoolGradeStat> SchoolGradeStats => Set<SchoolGradeStat>();
+    public DbSet<SchoolPersonnelTypeStat> SchoolPersonnelTypeStats => Set<SchoolPersonnelTypeStat>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // ── Plan #26 — School profile expansion shadow properties on School ──
+        modelBuilder.Entity<School>(entity =>
+        {
+            entity.Property<string?>("History").HasColumnName("History");
+            entity.Property<int?>("LandRai").HasColumnName("LandRai");
+            entity.Property<int?>("LandNgan").HasColumnName("LandNgan");
+            entity.Property<decimal?>("LandSqwa").HasColumnType("numeric(8,2)").HasColumnName("LandSqwa");
+        });
+
+        // ── Plan #26 — SchoolIdentity ──
+        modelBuilder.Entity<SchoolIdentity>(entity =>
+        {
+            entity.ToTable("school_identities");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.FiscalYear).HasColumnName("fiscal_year");
+            entity.Property(e => e.Vision).HasColumnName("vision");
+            entity.Property(e => e.Philosophy).HasColumnName("philosophy");
+            entity.Property(e => e.Slogan).HasColumnName("slogan").HasMaxLength(255);
+            entity.Property(e => e.Abbreviation).HasColumnName("abbreviation").HasMaxLength(50);
+            entity.Property(e => e.SchoolColors).HasColumnName("school_colors").HasMaxLength(255);
+            entity.Property(e => e.SchoolTree).HasColumnName("school_tree").HasMaxLength(255);
+            entity.Property(e => e.SchoolFlower).HasColumnName("school_flower").HasMaxLength(255);
+            entity.Property(e => e.UniformDescription).HasColumnName("uniform_description");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SchoolCode, e.FiscalYear }).IsUnique();
+
+            entity.HasMany(e => e.Missions).WithOne()
+                .HasForeignKey(m => m.IdentityId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.Goals).WithOne()
+                .HasForeignKey(g => g.IdentityId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.Strategies).WithOne()
+                .HasForeignKey(s => s.IdentityId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        ConfigureIdentityListItem<SchoolMission>(modelBuilder, "school_missions");
+        ConfigureIdentityListItem<SchoolGoal>(modelBuilder, "school_goals");
+        ConfigureIdentityListItem<SchoolStrategy>(modelBuilder, "school_strategies");
+
+        // ── Plan #26 — SchoolGradeStat ──
+        modelBuilder.Entity<SchoolGradeStat>(entity =>
+        {
+            entity.ToTable("school_grade_stats");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.AcademicYear).HasColumnName("academic_year");
+            entity.Property(e => e.Grade).HasColumnName("grade").HasMaxLength(20).IsRequired();
+            entity.Property(e => e.GradeOrder).HasColumnName("grade_order");
+            entity.Property(e => e.MaleCount).HasColumnName("male_count");
+            entity.Property(e => e.FemaleCount).HasColumnName("female_count");
+            entity.Property(e => e.ClassroomCount).HasColumnName("classroom_count");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear, e.Grade }).IsUnique();
+        });
+
+        // ── Plan #26 — SchoolPersonnelTypeStat ──
+        modelBuilder.Entity<SchoolPersonnelTypeStat>(entity =>
+        {
+            entity.ToTable("school_personnel_type_stats");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.AcademicYear).HasColumnName("academic_year");
+            entity.Property(e => e.PersonnelType).HasColumnName("personnel_type").HasMaxLength(50).IsRequired();
+            entity.Property(e => e.TypeOrder).HasColumnName("type_order");
+            entity.Property(e => e.MaleCount).HasColumnName("male_count");
+            entity.Property(e => e.FemaleCount).HasColumnName("female_count");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear, e.PersonnelType }).IsUnique();
+        });
 
         // ── Module: shadow properties for new fields not yet in NuGet ──
         // These create DB columns that EF Core manages via EF.Property<T>()
@@ -52,5 +131,18 @@ public class GatewayDbContext : SbdDbContext
 
         // SchoolModule: IsPilot + Notes are now real entity properties in SBD.Domain.
         // Shadow property definitions removed — EF Core uses the entity CLR properties directly.
+    }
+
+    private static void ConfigureIdentityListItem<T>(ModelBuilder modelBuilder, string tableName) where T : class
+    {
+        modelBuilder.Entity<T>(entity =>
+        {
+            entity.ToTable(tableName);
+            entity.HasKey("Id");
+            entity.Property<long>("Id").HasColumnName("id");
+            entity.Property<long>("IdentityId").HasColumnName("identity_id");
+            entity.Property<int>("SortOrder").HasColumnName("sort_order");
+            entity.Property<string>("Description").HasColumnName("description").IsRequired();
+        });
     }
 }

@@ -352,6 +352,72 @@ public class SchoolController : ControllerBase
         return Ok(MapToDto(school));
     }
 
+    // ─── Plan #26 — Extended profile (history, land area, GPS, basic info) ───
+
+    /// <summary>GET extended profile fields (Plan #26 additions: history + land area).</summary>
+    [HttpGet("{schoolCode}/profile-extended")]
+    public async Task<ActionResult<SchoolProfileExtendedDto>> GetProfileExtended(string schoolCode)
+    {
+        var school = await _context.Schools.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
+        if (school == null) return NotFound(new { message = "School not found" });
+
+        // Read shadow properties via Entry API
+        var entry = _context.Entry(school);
+        return Ok(new SchoolProfileExtendedDto
+        {
+            SchoolCode = school.SchoolCode,
+            History = entry.Property<string?>("History").CurrentValue,
+            LandRai = entry.Property<int?>("LandRai").CurrentValue,
+            LandNgan = entry.Property<int?>("LandNgan").CurrentValue,
+            LandSqwa = entry.Property<decimal?>("LandSqwa").CurrentValue,
+            TaxId = school.TaxId,
+            SchoolCluster = school.SchoolCluster,
+            EstablishedDate = school.EstablishedDate,
+            Latitude = school.Latitude,
+            Longitude = school.Longitude,
+        });
+    }
+
+    /// <summary>PUT extended profile fields.</summary>
+    [HttpPut("{schoolCode}/profile-extended")]
+    public async Task<ActionResult<SchoolProfileExtendedDto>> UpdateProfileExtended(
+        string schoolCode, [FromBody] SchoolProfileExtendedRequest request)
+    {
+        var school = await _context.Schools.AsTracking()
+            .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
+        if (school == null) return NotFound(new { message = "School not found" });
+
+        var entry = _context.Entry(school);
+        entry.Property<string?>("History").CurrentValue = request.History;
+        entry.Property<int?>("LandRai").CurrentValue = request.LandRai;
+        entry.Property<int?>("LandNgan").CurrentValue = request.LandNgan;
+        entry.Property<decimal?>("LandSqwa").CurrentValue = request.LandSqwa;
+
+        school.TaxId = request.TaxId;
+        school.SchoolCluster = request.SchoolCluster;
+        school.EstablishedDate = request.EstablishedDate;
+        school.Latitude = request.Latitude;
+        school.Longitude = request.Longitude;
+
+        await _context.SaveChangesAsync();
+        await _cache.RemoveAsync(CacheKey);
+
+        return Ok(new SchoolProfileExtendedDto
+        {
+            SchoolCode = school.SchoolCode,
+            History = request.History,
+            LandRai = request.LandRai,
+            LandNgan = request.LandNgan,
+            LandSqwa = request.LandSqwa,
+            TaxId = school.TaxId,
+            SchoolCluster = school.SchoolCluster,
+            EstablishedDate = school.EstablishedDate,
+            Latitude = school.Latitude,
+            Longitude = school.Longitude,
+        });
+    }
+
     // ─── Personnel ────────────────────────────────────────────
 
     [HttpGet("{schoolCode}/personnel")]
@@ -723,6 +789,34 @@ public record SchoolProfileUpdateRequest(
     int? StudentCount,
     int? TeacherCount
 );
+
+// Plan #26 — Extended profile (history + land + GPS + admin meta)
+public class SchoolProfileExtendedDto
+{
+    public string SchoolCode { get; set; } = string.Empty;
+    public string? History { get; set; }
+    public int? LandRai { get; set; }
+    public int? LandNgan { get; set; }
+    public decimal? LandSqwa { get; set; }
+    public string? TaxId { get; set; }
+    public string? SchoolCluster { get; set; }
+    public DateOnly? EstablishedDate { get; set; }
+    public decimal? Latitude { get; set; }
+    public decimal? Longitude { get; set; }
+}
+
+public class SchoolProfileExtendedRequest
+{
+    public string? History { get; set; }
+    public int? LandRai { get; set; }
+    public int? LandNgan { get; set; }
+    public decimal? LandSqwa { get; set; }
+    public string? TaxId { get; set; }
+    public string? SchoolCluster { get; set; }
+    public DateOnly? EstablishedDate { get; set; }
+    public decimal? Latitude { get; set; }
+    public decimal? Longitude { get; set; }
+}
 
 public record SchoolListItemDto(
     string SchoolCode,
