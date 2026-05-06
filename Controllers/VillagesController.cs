@@ -5,6 +5,7 @@ using Gateway.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using SBD.Infrastructure.Data;
 
 namespace Gateway.Controllers;
@@ -218,6 +219,10 @@ public class VillagesSeederController : ControllerBase
                 {
                     existing.Code = r.mcode;
                     existing.NameTh = nameTh;
+                    // Force Modified state — bare property assignment isn't always
+                    // detected by EF Core change tracker for entities loaded via
+                    // bare ToListAsync() (no Attach/Update used).
+                    _db.Entry(existing).State = EntityState.Modified;
                     updated++;
                 }
             }
