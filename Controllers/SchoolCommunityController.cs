@@ -139,8 +139,6 @@ public class SchoolCommunityController : ControllerBase
     {
         var fiscalYear = year ?? CurrentFiscalYear();
         var ctx = await _db.SchoolCommunityContexts
-            .Include(c => c.ServiceVillages)
-            .Include(c => c.Occupations)
             .FirstOrDefaultAsync(c => c.SchoolCode == schoolCode && c.FiscalYear == fiscalYear);
 
         if (ctx == null)
@@ -163,10 +161,16 @@ public class SchoolCommunityController : ControllerBase
         ctx.AverageIncomePerHousehold = req.AverageIncomePerHousehold;
         ctx.Notes = req.Notes;
         ctx.UpdatedAt = DateTimeOffset.UtcNow;
+        await _db.SaveChangesAsync();   // ensure ctx.Id is generated for first save
 
-        // Replace lists wholesale
-        ctx.ServiceVillages.Clear();
-        ctx.Occupations.Clear();
+        // Bulk replace child lists via direct DbSet.RemoveRange + Add
+        // (Pattern matches SaveBoard — avoids EF Core navigation quirks where
+        // ctx.Occupations.Add() after Clear() sometimes doesn't register the INSERT
+        // when the parent was just-loaded with .Include.)
+        var existingVillages = _db.SchoolServiceVillages.Where(v => v.ContextId == ctx.Id);
+        _db.SchoolServiceVillages.RemoveRange(existingVillages);
+        var existingOcc = _db.SchoolMajorOccupations.Where(o => o.ContextId == ctx.Id);
+        _db.SchoolMajorOccupations.RemoveRange(existingOcc);
         await _db.SaveChangesAsync();
 
         if (req.ServiceVillages != null)
@@ -174,7 +178,7 @@ public class SchoolCommunityController : ControllerBase
             for (int i = 0; i < req.ServiceVillages.Count; i++)
             {
                 var sv = req.ServiceVillages[i];
-                ctx.ServiceVillages.Add(new SchoolServiceVillage
+                _db.SchoolServiceVillages.Add(new SchoolServiceVillage
                 {
                     ContextId = ctx.Id,
                     VillageId = sv.VillageId,
@@ -193,10 +197,11 @@ public class SchoolCommunityController : ControllerBase
             for (int i = 0; i < req.Occupations.Count; i++)
             {
                 var o = req.Occupations[i];
-                ctx.Occupations.Add(new SchoolMajorOccupation
+                if (string.IsNullOrWhiteSpace(o.OccupationName)) continue;
+                _db.SchoolMajorOccupations.Add(new SchoolMajorOccupation
                 {
                     ContextId = ctx.Id,
-                    OccupationName = o.OccupationName,
+                    OccupationName = o.OccupationName.Trim(),
                     HouseholdCount = o.HouseholdCount,
                     Percentage = o.Percentage,
                     SortOrder = i,
