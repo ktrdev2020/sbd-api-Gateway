@@ -48,6 +48,12 @@ public class GatewayDbContext : SbdDbContext
             entity.Property<decimal?>("LandSqwa").HasColumnType("numeric(8,2)").HasColumnName("LandSqwa");
         });
 
+        // ── Plan #27 — Personnel.CoverPhoto (shadow property; raw-SQL migrated) ──
+        modelBuilder.Entity<Personnel>(entity =>
+        {
+            entity.Property<string?>("CoverPhoto").HasColumnName("CoverPhoto");
+        });
+
         // ── Plan #26 — SchoolIdentity ──
         modelBuilder.Entity<SchoolIdentity>(entity =>
         {

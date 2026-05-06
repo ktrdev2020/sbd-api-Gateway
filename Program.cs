@@ -825,6 +825,12 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Plan #27 Phase A.0 — TeacherHomeroomAssignments ensured.");
 
+    // ── Plan #27 T3 — Personnel.CoverPhoto column for profile cover image ────
+    await db.Database.ExecuteSqlRawAsync(@"
+        ALTER TABLE ""Personnel"" ADD COLUMN IF NOT EXISTS ""CoverPhoto"" TEXT;
+    ");
+    Console.WriteLine("[Migration] Plan #27 — Personnel.CoverPhoto ensured.");
+
     // ── Phase A.3 — Personnel Management: approval workflow + secondment ──────
     await db.Database.ExecuteSqlRawAsync(@"
         -- ============================================================================
