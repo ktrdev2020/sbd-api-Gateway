@@ -787,6 +787,44 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Plan #26 Phase 3 — Villages + community_context + service_villages + occupations + board_members ensured.");
 
+    // ── Plan #27 Phase A.0 — Teacher Homeroom Advisor Assignment ─────────────
+    // M:N: 1 classroom ↔ many advisor teachers · 1 teacher ↔ many classrooms
+    // (scoped to academic_year + optional term). Drives Teacher dashboard
+    // "ห้องที่ดูแล" KPI and the /classes endpoint. SchoolAdmin assigns by
+    // default; delegatable to teachers via HCD capability `school:homeroom:assign`.
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""TeacherHomeroomAssignments"" (
+            ""Id""                  BIGSERIAL PRIMARY KEY,
+            ""PersonnelId""         INTEGER NOT NULL REFERENCES ""Personnel""(""Id"") ON DELETE CASCADE,
+            ""SchoolCode""          VARCHAR(10) NOT NULL,
+            ""AcademicYear""        SMALLINT NOT NULL,
+            ""Term""                SMALLINT,
+            ""GradeLevelId""        BIGINT NOT NULL,
+            ""ClassroomNumber""     SMALLINT NOT NULL,
+            ""Role""                VARCHAR(20) NOT NULL DEFAULT 'advisor',
+            ""AssignedByUserId""    INTEGER NOT NULL,
+            ""AssignedAt""          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ""EndDate""             DATE,
+            ""DeletedAt""           TIMESTAMPTZ,
+            ""DeletedByUserId""     INTEGER
+        );
+        DO $$ BEGIN
+            ALTER TABLE ""TeacherHomeroomAssignments""
+                ADD CONSTRAINT fk_teacher_homeroom_school
+                FOREIGN KEY (""SchoolCode"") REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_teacher_homeroom_active""
+            ON ""TeacherHomeroomAssignments"" (""PersonnelId"", ""SchoolCode"", ""AcademicYear"", ""GradeLevelId"", ""ClassroomNumber"")
+            WHERE ""DeletedAt"" IS NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_teacher_homeroom_school_year""
+            ON ""TeacherHomeroomAssignments"" (""SchoolCode"", ""AcademicYear"") WHERE ""DeletedAt"" IS NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_teacher_homeroom_personnel_year""
+            ON ""TeacherHomeroomAssignments"" (""PersonnelId"", ""AcademicYear"") WHERE ""DeletedAt"" IS NULL;
+        CREATE INDEX IF NOT EXISTS ""IX_teacher_homeroom_classroom""
+            ON ""TeacherHomeroomAssignments"" (""SchoolCode"", ""AcademicYear"", ""GradeLevelId"", ""ClassroomNumber"") WHERE ""DeletedAt"" IS NULL;
+    ");
+    Console.WriteLine("[Migration] Plan #27 Phase A.0 — TeacherHomeroomAssignments ensured.");
+
     // ── Phase A.3 — Personnel Management: approval workflow + secondment ──────
     await db.Database.ExecuteSqlRawAsync(@"
         -- ============================================================================
@@ -1363,6 +1401,18 @@ using (var scope = app.Services.CreateScope())
         ON CONFLICT (""Code"") DO NOTHING;
     ");
     Console.WriteLine("[Seed] Students module capabilities ensured (school:students:* + area:students:view).");
+
+    // ── Plan #27 Phase A.0 — Homeroom Advisor capability seed ─────────────────
+    // SchoolAdmin auto-grants this on assignment via UserRoles. Delegatable to
+    // teachers through HCD grant flow (T0d).
+    await db.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO ""authz_capability_definitions""
+            (""Code"", ""Module"", ""Resource"", ""Action"", ""NameTh"", ""Description"", ""DefaultScope"", ""IsRedelegatable"", ""MaxDelegationDepth"", ""IsDangerous"", ""RequiresApproval"", ""IsActive"")
+        VALUES
+            ('school:homeroom:assign', 'homeroom', 'school-homeroom', 'assign', 'มอบหมายครูที่ปรึกษา/ครูประจำชั้น', 'กำหนดครูที่ปรึกษาห้องเรียนต่อปีการศึกษา · 1 ห้องมีหลายครูได้ · 1 ครูดูแลหลายห้องได้', 'school', TRUE, 2, FALSE, FALSE, TRUE)
+        ON CONFLICT (""Code"") DO NOTHING;
+    ");
+    Console.WriteLine("[Seed] Plan #27 — school:homeroom:assign capability ensured.");
 
     // Seed schools from สพป.ศรีสะเกษ เขต 3
     await Gateway.SchoolSeedData.SeedAsync(db);

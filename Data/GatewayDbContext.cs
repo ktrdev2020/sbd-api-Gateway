@@ -32,6 +32,8 @@ public class GatewayDbContext : SbdDbContext
     public DbSet<SchoolServiceVillage> SchoolServiceVillages => Set<SchoolServiceVillage>();
     public DbSet<SchoolMajorOccupation> SchoolMajorOccupations => Set<SchoolMajorOccupation>();
     public DbSet<SchoolBoardMember> SchoolBoardMembers => Set<SchoolBoardMember>();
+    // ── Plan #27 Phase A.0 — Teacher homeroom advisor assignments ──
+    public DbSet<TeacherHomeroomAssignment> TeacherHomeroomAssignments => Set<TeacherHomeroomAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -226,6 +228,23 @@ public class GatewayDbContext : SbdDbContext
 
         // SchoolModule: IsPilot + Notes are now real entity properties in SBD.Domain.
         // Shadow property definitions removed — EF Core uses the entity CLR properties directly.
+
+        // ── Plan #27 Phase A.0 — TeacherHomeroomAssignment ──
+        modelBuilder.Entity<TeacherHomeroomAssignment>(entity =>
+        {
+            entity.ToTable("TeacherHomeroomAssignments");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SchoolCode).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.Role).HasMaxLength(20).HasDefaultValue("advisor");
+            entity.Property(e => e.AssignedAt).HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.PersonnelId, e.SchoolCode, e.AcademicYear, e.GradeLevelId, e.ClassroomNumber })
+                .HasDatabaseName("UX_teacher_homeroom_active")
+                .IsUnique()
+                .HasFilter("\"DeletedAt\" IS NULL");
+            entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear })
+                .HasDatabaseName("IX_teacher_homeroom_school_year")
+                .HasFilter("\"DeletedAt\" IS NULL");
+        });
     }
 
     private static void ConfigureIdentityListItem<T>(ModelBuilder modelBuilder, string tableName) where T : class
