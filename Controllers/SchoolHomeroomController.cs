@@ -255,6 +255,72 @@ public class SchoolHomeroomController : ControllerBase
         return list;
     }
 
+    public record CopyFromPreviousYearRequest(short FromYear, short ToYear);
+    public record CopyFromPreviousYearResponse(int Copied, int Skipped);
+
+    /// <summary>
+    /// Plan #28 T6 — Bulk copy advisor assignments from a prior year to a target year.
+    /// Skips rows where the personnel is no longer assigned to this school as primary
+    /// (transferred out / left service). Idempotent on conflicts: rows that already
+    /// exist for (target year, classroom, personnel) are silently skipped.
+    /// Same authorization gate as POST.
+    /// </summary>
+    [HttpPost("copy-from-previous-year")]
+    public async Task<ActionResult<CopyFromPreviousYearResponse>> CopyFromPreviousYear(
+        string schoolCode, [FromBody] CopyFromPreviousYearRequest req, CancellationToken ct)
+    {
+        if (!await CanAssignAsync(schoolCode, ct)) return Forbid();
+        var userId = CurrentUserId!.Value;
+
+        // Source: active advisor rows for fromYear
+        var sourceRows = await _db.TeacherHomeroomAssignments.AsNoTracking()
+            .Where(a => a.SchoolCode == schoolCode && a.AcademicYear == req.FromYear && a.DeletedAt == null)
+            .ToListAsync(ct);
+
+        if (sourceRows.Count == 0)
+            return Ok(new CopyFromPreviousYearResponse(0, 0));
+
+        // Personnel still affiliated with this school as primary
+        var stillHere = await _db.PersonnelSchoolAssignments.AsNoTracking()
+            .Where(psa => psa.SchoolCode == schoolCode && psa.IsPrimary)
+            .Select(psa => psa.PersonnelId)
+            .ToListAsync(ct);
+        var stillHereSet = stillHere.ToHashSet();
+
+        // Existing rows for toYear (avoid duplicates)
+        var existingKeys = await _db.TeacherHomeroomAssignments.AsNoTracking()
+            .Where(a => a.SchoolCode == schoolCode && a.AcademicYear == req.ToYear && a.DeletedAt == null)
+            .Select(a => new { a.PersonnelId, a.GradeLevelId, a.ClassroomNumber })
+            .ToListAsync(ct);
+        var existingSet = existingKeys
+            .Select(k => $"{k.PersonnelId}|{k.GradeLevelId}|{k.ClassroomNumber}")
+            .ToHashSet();
+
+        int copied = 0, skipped = 0;
+        foreach (var src in sourceRows)
+        {
+            if (!stillHereSet.Contains(src.PersonnelId)) { skipped++; continue; }
+            var key = $"{src.PersonnelId}|{src.GradeLevelId}|{src.ClassroomNumber}";
+            if (existingSet.Contains(key)) { skipped++; continue; }
+
+            _db.TeacherHomeroomAssignments.Add(new TeacherHomeroomAssignment
+            {
+                PersonnelId = src.PersonnelId,
+                SchoolCode = schoolCode,
+                AcademicYear = req.ToYear,
+                Term = src.Term,
+                GradeLevelId = src.GradeLevelId,
+                ClassroomNumber = src.ClassroomNumber,
+                Role = src.Role,
+                AssignedByUserId = userId,
+                AssignedAt = DateTimeOffset.UtcNow,
+            });
+            copied++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return Ok(new CopyFromPreviousYearResponse(copied, skipped));
+    }
+
     /// <summary>
     /// Soft-delete a single assignment.
     /// </summary>

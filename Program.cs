@@ -1262,7 +1262,7 @@ using (var scope = app.Services.CreateScope())
         ('SchoolAdmin','profile','ข้อมูลโรงเรียน','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('SchoolAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),
         ('SchoolAdmin','personnel','บุคลากร','fas fa-user-tie','{{basePath}}/personnel',4,TRUE,FALSE,NULL),
-        ('SchoolAdmin','psnl','บริหารงานบุคคล','fas fa-id-card-alt','{{basePath}}/psnl',5,TRUE,FALSE,NULL),
+        ('SchoolAdmin','homeroom','ครูที่ปรึกษา','fas fa-chalkboard-teacher','{{basePath}}/homeroom',5,TRUE,FALSE,NULL),
         ('SchoolAdmin','users','จัดการผู้ใช้','fas fa-users-cog','{{basePath}}/users',6,TRUE,FALSE,NULL),
         ('SchoolAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',7,TRUE,FALSE,NULL),
         ('SchoolAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',8,TRUE,FALSE,NULL),
@@ -1296,6 +1296,15 @@ using (var scope = app.Services.CreateScope())
         -- IsActive is intentionally NOT updated: admins can toggle items via menu-management
         ");
     Console.WriteLine("[Seed] MenuItems table ensured.");
+
+    // ── Plan #28 T1 — Remove deprecated SchoolAdmin/psnl row (replaced by homeroom) ──
+    // The seed UPSERT can't drop a row, so we delete obsolete keys explicitly.
+    // Idempotent — DELETE WHERE returns 0 rows once removed.
+    await db.Database.ExecuteSqlRawAsync(@"
+        DELETE FROM ""MenuItems""
+        WHERE ""Role""='SchoolAdmin' AND ""ItemKey""='psnl';
+    ");
+    Console.WriteLine("[Seed] Plan #28 — SchoolAdmin/psnl menu row removed (replaced by homeroom).");
 
     // Invalidate Redis menu caches so the updated seed is served immediately on first request
     try
