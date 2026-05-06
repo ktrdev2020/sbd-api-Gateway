@@ -685,6 +685,108 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] Plan #26 — School profile expansion (history, land, identity, grade-stats, personnel-stats) ensured.");
 
+    // ── Plan #26 Phase 3 — Community + Service Area Villages + School Board ──
+    await db.Database.ExecuteSqlRawAsync(@"
+        -- Villages master (รหัสกรมการปกครอง 8 หลัก PPDDSSMM)
+        CREATE TABLE IF NOT EXISTS ""Villages"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""SubDistrictId"" INTEGER NOT NULL,
+            ""MooNo"" INTEGER NOT NULL,
+            ""NameTh"" VARCHAR(255) NOT NULL,
+            ""Code"" VARCHAR(20),
+            ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Villages_SubDistrict_MooNo""
+            ON ""Villages"" (""SubDistrictId"", ""MooNo"");
+        CREATE INDEX IF NOT EXISTS ""IX_Villages_Code"" ON ""Villages"" (""Code"");
+        DO $$ BEGIN
+            ALTER TABLE ""Villages""
+                ADD CONSTRAINT ""FK_Villages_SubDistricts""
+                FOREIGN KEY (""SubDistrictId"") REFERENCES ""SubDistricts""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- school_community_context — บริบทชุมชน 1:1 per school × fiscal_year
+        CREATE TABLE IF NOT EXISTS school_community_context (
+            id BIGSERIAL PRIMARY KEY,
+            school_code VARCHAR(10) NOT NULL,
+            fiscal_year INTEGER NOT NULL,
+            subdistrict_male_population INTEGER,
+            subdistrict_female_population INTEGER,
+            subdistrict_household_count INTEGER,
+            geography_description TEXT,
+            climate_description TEXT,
+            economy_description TEXT,
+            religion_culture_description TEXT,
+            average_income_per_household NUMERIC(12,2),
+            notes TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_school_community_context_uq
+            ON school_community_context (school_code, fiscal_year);
+        DO $$ BEGIN
+            ALTER TABLE school_community_context
+                ADD CONSTRAINT fk_school_community_context_school
+                FOREIGN KEY (school_code) REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- school_service_villages — เขตบริการ 1:N (FK to Villages master)
+        CREATE TABLE IF NOT EXISTS school_service_villages (
+            id BIGSERIAL PRIMARY KEY,
+            context_id BIGINT NOT NULL REFERENCES school_community_context(id) ON DELETE CASCADE,
+            village_id INTEGER NOT NULL,
+            headman_name VARCHAR(255),
+            headman_phone VARCHAR(50),
+            male_count INTEGER,
+            female_count INTEGER,
+            household_count INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            notes TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_service_villages_context ON school_service_villages (context_id);
+        CREATE INDEX IF NOT EXISTS ix_school_service_villages_village ON school_service_villages (village_id);
+        DO $$ BEGIN
+            ALTER TABLE school_service_villages
+                ADD CONSTRAINT fk_school_service_villages_village
+                FOREIGN KEY (village_id) REFERENCES ""Villages""(""Id"") ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+        -- school_major_occupations — อาชีพหลักในชุมชน 1:N
+        CREATE TABLE IF NOT EXISTS school_major_occupations (
+            id BIGSERIAL PRIMARY KEY,
+            context_id BIGINT NOT NULL REFERENCES school_community_context(id) ON DELETE CASCADE,
+            occupation_name VARCHAR(255) NOT NULL,
+            household_count INTEGER,
+            percentage NUMERIC(5,2),
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_major_occupations_context ON school_major_occupations (context_id);
+
+        -- school_board_members — คณะกรรมการสถานศึกษา 1:N per fiscal_year
+        CREATE TABLE IF NOT EXISTS school_board_members (
+            id BIGSERIAL PRIMARY KEY,
+            school_code VARCHAR(10) NOT NULL,
+            fiscal_year INTEGER NOT NULL,
+            member_name VARCHAR(255) NOT NULL,
+            role VARCHAR(100),
+            representing VARCHAR(100),
+            contact_phone VARCHAR(50),
+            appointed_at DATE,
+            expires_at DATE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_board_members_school_year
+            ON school_board_members (school_code, fiscal_year);
+        DO $$ BEGIN
+            ALTER TABLE school_board_members
+                ADD CONSTRAINT fk_school_board_members_school
+                FOREIGN KEY (school_code) REFERENCES ""Schools""(""SchoolCode"") ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    ");
+    Console.WriteLine("[Migration] Plan #26 Phase 3 — Villages + community_context + service_villages + occupations + board_members ensured.");
+
     // ── Phase A.3 — Personnel Management: approval workflow + secondment ──────
     await db.Database.ExecuteSqlRawAsync(@"
         -- ============================================================================

@@ -26,6 +26,12 @@ public class GatewayDbContext : SbdDbContext
     public DbSet<SchoolIdentity> SchoolIdentities => Set<SchoolIdentity>();
     public DbSet<SchoolGradeStat> SchoolGradeStats => Set<SchoolGradeStat>();
     public DbSet<SchoolPersonnelTypeStat> SchoolPersonnelTypeStats => Set<SchoolPersonnelTypeStat>();
+    // ── Plan #26 Phase 3 — Community + Villages ──
+    public DbSet<Village> Villages => Set<Village>();
+    public DbSet<SchoolCommunityContext> SchoolCommunityContexts => Set<SchoolCommunityContext>();
+    public DbSet<SchoolServiceVillage> SchoolServiceVillages => Set<SchoolServiceVillage>();
+    public DbSet<SchoolMajorOccupation> SchoolMajorOccupations => Set<SchoolMajorOccupation>();
+    public DbSet<SchoolBoardMember> SchoolBoardMembers => Set<SchoolBoardMember>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -103,6 +109,95 @@ public class GatewayDbContext : SbdDbContext
             entity.Property(e => e.FemaleCount).HasColumnName("female_count");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()");
             entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear, e.PersonnelType }).IsUnique();
+        });
+
+        // ── Plan #26 Phase 3 — Villages master ──
+        modelBuilder.Entity<Village>(entity =>
+        {
+            entity.ToTable("Villages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.SubDistrictId).HasColumnName("SubDistrictId");
+            entity.Property(e => e.MooNo).HasColumnName("MooNo");
+            entity.Property(e => e.NameTh).HasColumnName("NameTh").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.Code).HasColumnName("Code").HasMaxLength(20);
+            entity.Property(e => e.IsActive).HasColumnName("IsActive");
+            entity.Property(e => e.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SubDistrictId, e.MooNo }).IsUnique();
+            entity.HasIndex(e => e.Code);
+        });
+
+        // ── Plan #26 Phase 3 — SchoolCommunityContext ──
+        modelBuilder.Entity<SchoolCommunityContext>(entity =>
+        {
+            entity.ToTable("school_community_context");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.FiscalYear).HasColumnName("fiscal_year");
+            entity.Property(e => e.SubdistrictMalePopulation).HasColumnName("subdistrict_male_population");
+            entity.Property(e => e.SubdistrictFemalePopulation).HasColumnName("subdistrict_female_population");
+            entity.Property(e => e.SubdistrictHouseholdCount).HasColumnName("subdistrict_household_count");
+            entity.Property(e => e.GeographyDescription).HasColumnName("geography_description");
+            entity.Property(e => e.ClimateDescription).HasColumnName("climate_description");
+            entity.Property(e => e.EconomyDescription).HasColumnName("economy_description");
+            entity.Property(e => e.ReligionCultureDescription).HasColumnName("religion_culture_description");
+            entity.Property(e => e.AverageIncomePerHousehold).HasColumnName("average_income_per_household").HasColumnType("numeric(12,2)");
+            entity.Property(e => e.Notes).HasColumnName("notes");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SchoolCode, e.FiscalYear }).IsUnique();
+
+            entity.HasMany(e => e.ServiceVillages).WithOne()
+                .HasForeignKey(v => v.ContextId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(e => e.Occupations).WithOne()
+                .HasForeignKey(o => o.ContextId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SchoolServiceVillage>(entity =>
+        {
+            entity.ToTable("school_service_villages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.ContextId).HasColumnName("context_id");
+            entity.Property(e => e.VillageId).HasColumnName("village_id");
+            entity.Property(e => e.HeadmanName).HasColumnName("headman_name").HasMaxLength(255);
+            entity.Property(e => e.HeadmanPhone).HasColumnName("headman_phone").HasMaxLength(50);
+            entity.Property(e => e.MaleCount).HasColumnName("male_count");
+            entity.Property(e => e.FemaleCount).HasColumnName("female_count");
+            entity.Property(e => e.HouseholdCount).HasColumnName("household_count");
+            entity.Property(e => e.SortOrder).HasColumnName("sort_order");
+            entity.Property(e => e.Notes).HasColumnName("notes");
+        });
+
+        modelBuilder.Entity<SchoolMajorOccupation>(entity =>
+        {
+            entity.ToTable("school_major_occupations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.ContextId).HasColumnName("context_id");
+            entity.Property(e => e.OccupationName).HasColumnName("occupation_name").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.HouseholdCount).HasColumnName("household_count");
+            entity.Property(e => e.Percentage).HasColumnName("percentage").HasColumnType("numeric(5,2)");
+            entity.Property(e => e.SortOrder).HasColumnName("sort_order");
+        });
+
+        modelBuilder.Entity<SchoolBoardMember>(entity =>
+        {
+            entity.ToTable("school_board_members");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.FiscalYear).HasColumnName("fiscal_year");
+            entity.Property(e => e.MemberName).HasColumnName("member_name").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.Role).HasColumnName("role").HasMaxLength(100);
+            entity.Property(e => e.Representing).HasColumnName("representing").HasMaxLength(100);
+            entity.Property(e => e.ContactPhone).HasColumnName("contact_phone").HasMaxLength(50);
+            entity.Property(e => e.AppointedAt).HasColumnName("appointed_at");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+            entity.Property(e => e.SortOrder).HasColumnName("sort_order");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.HasIndex(e => new { e.SchoolCode, e.FiscalYear });
         });
 
         // ── Module: shadow properties for new fields not yet in NuGet ──
