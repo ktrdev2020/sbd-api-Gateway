@@ -69,7 +69,8 @@ public class MeTeacherDashboardController : ControllerBase
         string? PersonnelTypeName, string? SubjectAreaName, string? Position,
         string? SchoolCode, string? SchoolNameTh, string? Principal,
         int? SchoolSizeStd7, int? StudentCount, int? TeacherCount,
-        short AcademicYear, short Term);
+        short AcademicYear, short Term,
+        string? Phone, string? Email, string? LineId, string? Facebook, string? Telegram);
 
     [HttpGet("dashboard")]
     public async Task<ActionResult<DashboardDto>> GetDashboard(CancellationToken ct)
@@ -101,7 +102,8 @@ public class MeTeacherDashboardController : ControllerBase
                 s != null ? s.SchoolSizeStd7 : null,
                 s != null ? s.StudentCount : null,
                 s != null ? s.TeacherCount : null,
-                CurrentAcademicYear(), CurrentTerm())
+                CurrentAcademicYear(), CurrentTerm(),
+                p.Phone, p.Email, p.LineId, p.Facebook, p.Telegram)
         ).FirstOrDefaultAsync(ct);
 
         if (dto == null) return NoContent();
