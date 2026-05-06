@@ -127,7 +127,10 @@ public class SchoolHomeroomController : ControllerBase
         if (!await CanAssignAsync(schoolCode, ct)) return Forbid();
         var userId = CurrentUserId!.Value;
 
-        var existing = await _db.TeacherHomeroomAssignments
+        // .AsTracking() required — Gateway DbContext default is NoTracking
+        // (see Program.cs UseQueryTrackingBehavior). Without it, mutations
+        // below (row.DeletedAt = …) are silently dropped by SaveChanges.
+        var existing = await _db.TeacherHomeroomAssignments.AsTracking()
             .Where(a => a.SchoolCode == schoolCode
                         && a.AcademicYear == req.AcademicYear
                         && a.Term == req.Term
@@ -329,7 +332,12 @@ public class SchoolHomeroomController : ControllerBase
     {
         if (!await CanAssignAsync(schoolCode, ct)) return Forbid();
 
-        var row = await _db.TeacherHomeroomAssignments
+        // .AsTracking() required — Gateway DbContext default is NoTracking
+        // (see Program.cs UseQueryTrackingBehavior). Without it the row is
+        // fetched but EF doesn't track it, so SaveChanges silently does nothing
+        // and the soft-delete is dropped. Caused production rows to stay
+        // visible after × pill-click despite Gateway returning 204.
+        var row = await _db.TeacherHomeroomAssignments.AsTracking()
             .FirstOrDefaultAsync(a => a.Id == id && a.SchoolCode == schoolCode && a.DeletedAt == null, ct);
         if (row == null) return NotFound();
 
