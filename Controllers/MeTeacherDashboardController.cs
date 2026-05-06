@@ -124,9 +124,32 @@ public class MeTeacherDashboardController : ControllerBase
         var primary = await ResolvePrimaryAsync(userId.Value, ct);
         if (primary is null || primary.Value.schoolCode is null) return Ok(Array.Empty<ClassroomDto>());
 
-        var year = academicYear ?? CurrentAcademicYear();
         var schoolCode = primary.Value.schoolCode;
         var personnelId = primary.Value.personnelId;
+
+        // Resolve year: requested → if empty, fall back to teacher's most recent year
+        // with any assignment. Handles the May academic-year-transition window when
+        // current BE rolled over but DMC enrollments + assignments still target prior BE.
+        short? year = academicYear;
+        if (year == null)
+        {
+            var requested = CurrentAcademicYear();
+            var hasRowsThisYear = await _db.TeacherHomeroomAssignments.AsNoTracking()
+                .AnyAsync(a => a.PersonnelId == personnelId && a.SchoolCode == schoolCode
+                            && a.AcademicYear == requested && a.DeletedAt == null, ct);
+            if (hasRowsThisYear)
+            {
+                year = requested;
+            }
+            else
+            {
+                year = await _db.TeacherHomeroomAssignments.AsNoTracking()
+                    .Where(a => a.PersonnelId == personnelId && a.SchoolCode == schoolCode && a.DeletedAt == null)
+                    .OrderByDescending(a => a.AcademicYear)
+                    .Select(a => (short?)a.AcademicYear)
+                    .FirstOrDefaultAsync(ct) ?? requested;
+            }
+        }
 
         // All advisor rows for this school × year (we need them for AdvisorNames per classroom)
         var allRows = await (
@@ -142,7 +165,7 @@ public class MeTeacherDashboardController : ControllerBase
 
         // Student counts via StudentApi (SmisCode)
         var smis = primary.Value.smisCode ?? schoolCode;
-        var counts = await FetchClassroomCountsAsync(smis, year, ct);
+        var counts = await FetchClassroomCountsAsync(smis, year.Value, ct);
 
         // Compose rows for classrooms where this teacher is advisor
         var rows = allRows
