@@ -123,27 +123,46 @@ public class VillagesSeederController : ControllerBase
     }
 
     [HttpPost]
+    [RequestSizeLimit(20_000_000)]   // 20 MB — DOPA province JSON is ~6 MB
     public async Task<ActionResult<DopaSeedResult>> SeedFromDopa(
-        [FromQuery] string url,
-        [FromQuery] string? districtFilter)  // optional comma-separated district codes (e.g. "3305,3322,3326")
+        [FromQuery] string? url,
+        [FromQuery] string? districtFilter,  // optional comma-separated district codes (e.g. "3305,3322,3326")
+        [FromBody] List<DopaVillageRow>? body = null)
     {
-        if (string.IsNullOrWhiteSpace(url))
-            return BadRequest(new { message = "url query param required" });
+        List<DopaVillageRow>? rows = null;
 
-        // Fetch JSON
-        var http = _httpFactory.CreateClient();
-        http.Timeout = TimeSpan.FromMinutes(2);
-        string json;
-        try { json = await http.GetStringAsync(url); }
-        catch (Exception ex) { return BadRequest(new { message = $"Fetch failed: {ex.Message}" }); }
-
-        List<DopaVillageRow>? rows;
-        try
+        // Either fetch from URL OR use POSTed JSON body
+        if (body != null && body.Count > 0)
         {
-            rows = JsonSerializer.Deserialize<List<DopaVillageRow>>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            rows = body;
+            _logger.LogInformation("DOPA seeder: using POSTed body with {Count} rows", body.Count);
         }
-        catch (Exception ex) { return BadRequest(new { message = $"Parse failed: {ex.Message}" }); }
+        else if (!string.IsNullOrWhiteSpace(url))
+        {
+            var http = _httpFactory.CreateClient();
+            http.Timeout = TimeSpan.FromMinutes(2);
+            string json;
+            try { json = await http.GetStringAsync(url); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "DOPA seeder: fetch failed for url={Url}", url);
+                return BadRequest(new { message = $"Fetch failed: {ex.Message}" });
+            }
+            try
+            {
+                rows = JsonSerializer.Deserialize<List<DopaVillageRow>>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "DOPA seeder: parse failed");
+                return BadRequest(new { message = $"Parse failed: {ex.Message}" });
+            }
+        }
+        else
+        {
+            return BadRequest(new { message = "Either ?url= query OR JSON body required" });
+        }
         if (rows == null) return BadRequest(new { message = "Empty/null JSON" });
 
         var allowedDistricts = string.IsNullOrWhiteSpace(districtFilter)
@@ -200,8 +219,16 @@ public class VillagesSeederController : ControllerBase
 
         if (newVillages.Count > 0)
         {
-            await _db.Villages.AddRangeAsync(newVillages);
-            await _db.SaveChangesAsync();
+            try
+            {
+                await _db.Villages.AddRangeAsync(newVillages);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "DOPA seeder: SaveChanges failed for {Count} villages", newVillages.Count);
+                return StatusCode(500, new { message = $"DB save failed: {ex.Message}", inner = ex.InnerException?.Message });
+            }
         }
 
         return Ok(new DopaSeedResult
@@ -216,7 +243,7 @@ public class VillagesSeederController : ControllerBase
         });
     }
 
-    private class DopaVillageRow
+    public class DopaVillageRow
     {
         [JsonPropertyName("pcode")] public string? pcode { get; set; }
         [JsonPropertyName("pname")] public string? pname { get; set; }
