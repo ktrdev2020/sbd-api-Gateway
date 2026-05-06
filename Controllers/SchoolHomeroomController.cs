@@ -189,9 +189,12 @@ public class SchoolHomeroomController : ControllerBase
             .Select(s => s.SmisCode ?? schoolCode)
             .FirstOrDefaultAsync(ct) ?? schoolCode;
 
+        // StudentApi call is independent of _db so it runs in parallel; the two
+        // EF queries share the same DbContext and must run sequentially
+        // (DbContext is NOT thread-safe).
         var classroomsTask = FetchClassroomsAsync(smis, academicYear, ct);
 
-        var teachersTask = (
+        var teachers = await (
             from p in _db.Personnel.AsNoTracking()
             join psa in _db.PersonnelSchoolAssignments.AsNoTracking()
                 on p.Id equals psa.PersonnelId
@@ -200,7 +203,7 @@ public class SchoolHomeroomController : ControllerBase
             select new TeacherPickDto(p.Id, p.FirstName, p.LastName, p.Photo, psa.Position, p.PersonnelTypeId)
         ).ToListAsync(ct);
 
-        var assignmentsTask = (
+        var assignments = await (
             from a in _db.TeacherHomeroomAssignments.AsNoTracking()
             join p in _db.Personnel.AsNoTracking() on a.PersonnelId equals p.Id
             where a.SchoolCode == schoolCode && a.AcademicYear == academicYear && a.DeletedAt == null
@@ -212,12 +215,9 @@ public class SchoolHomeroomController : ControllerBase
                 a.AssignedByUserId, a.AssignedAt, a.EndDate)
         ).ToListAsync(ct);
 
-        await Task.WhenAll(classroomsTask, teachersTask, assignmentsTask);
+        var classrooms = await classroomsTask;
 
-        return Ok(new SetupDto(
-            await classroomsTask,
-            await teachersTask,
-            await assignmentsTask));
+        return Ok(new SetupDto(classrooms, teachers, assignments));
     }
 
     private async Task<IReadOnlyList<ClassroomDto>> FetchClassroomsAsync(string smis, short year, CancellationToken ct)
