@@ -126,7 +126,7 @@ public class VillagesSeederController : ControllerBase
     [RequestSizeLimit(20_000_000)]   // 20 MB — DOPA province JSON is ~6 MB
     public async Task<ActionResult<DopaSeedResult>> SeedFromDopa(
         [FromQuery] string? url,
-        [FromQuery] string? districtFilter,  // optional comma-separated district codes (e.g. "3305,3322,3326")
+        [FromQuery] string? districtFilter,  // comma-separated district NAMES (e.g. "ขุขันธ์,ภูสิงห์,ไพรบึง,ปรางค์กู่") — matches DOPA aname
         [FromBody] List<DopaVillageRow>? body = null)
     {
         List<DopaVillageRow>? rows = null;
@@ -165,16 +165,18 @@ public class VillagesSeederController : ControllerBase
         }
         if (rows == null) return BadRequest(new { message = "Empty/null JSON" });
 
+        // Filter by district NAME (DOPA's `aname`) — SBD's Districts.Code uses internal numbering
+        // that doesn't always match DOPA's official 4-digit code.
         var allowedDistricts = string.IsNullOrWhiteSpace(districtFilter)
             ? null : districtFilter.Split(',').Select(s => s.Trim()).ToHashSet();
 
-        // Build subdistrict lookup: key = "{districtCode}|{subdistrictNameTh}"
+        // Build subdistrict lookup: key = "{districtNameTh}|{subdistrictNameTh}"
         var subdistMap = await _db.SubDistricts.AsNoTracking()
             .Include(sd => sd.District)
-            .Select(sd => new { sd.Id, sd.NameTh, DistrictCode = sd.District.Code })
+            .Select(sd => new { sd.Id, sd.NameTh, DistrictNameTh = sd.District.NameTh })
             .ToListAsync();
         var subdistByKey = subdistMap.ToDictionary(
-            x => $"{x.DistrictCode}|{x.NameTh}",
+            x => $"{x.DistrictNameTh}|{x.NameTh}",
             x => x.Id);
 
         // Existing villages keyed by (SubDistrictId, MooNo) for upsert
@@ -190,12 +192,12 @@ public class VillagesSeederController : ControllerBase
         foreach (var r in rows)
         {
             if (string.IsNullOrWhiteSpace(r.mcode) || string.IsNullOrWhiteSpace(r.mname)) continue;
-            if (allowedDistricts != null && !allowedDistricts.Contains(r.acode ?? "")) { skippedFiltered++; continue; }
+            if (allowedDistricts != null && !allowedDistricts.Contains(r.aname ?? "")) { skippedFiltered++; continue; }
 
             // Parse moo from mcode last 2 digits
             if (r.mcode.Length < 8 || !int.TryParse(r.mcode[^2..], out var moo) || moo < 1) { skippedBadCode++; continue; }
 
-            var subKey = $"{r.acode}|{r.tname}";
+            var subKey = $"{r.aname}|{r.tname}";
             if (!subdistByKey.TryGetValue(subKey, out var sdId))
             {
                 skippedNoSubdist++;
