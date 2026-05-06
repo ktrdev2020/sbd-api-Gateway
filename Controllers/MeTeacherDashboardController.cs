@@ -189,7 +189,7 @@ public class MeTeacherDashboardController : ControllerBase
     {
         var http = _httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(8);
-        var url = $"{StudentApiBase}/api/v1/school/{smisCode}/classrooms?academicYear={year}";
+        var url = $"{StudentApiBase}/api/v1/school/{smisCode}/students/classrooms?academicYear={year}";
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         var token = HttpContext.Request.Headers.Authorization.ToString();
         if (!string.IsNullOrWhiteSpace(token) && token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))

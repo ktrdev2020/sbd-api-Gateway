@@ -224,7 +224,7 @@ public class SchoolHomeroomController : ControllerBase
     {
         var http = _httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(8);
-        var url = $"{StudentApiBase}/api/v1/school/{smis}/classrooms?academicYear={year}";
+        var url = $"{StudentApiBase}/api/v1/school/{smis}/students/classrooms?academicYear={year}";
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         var auth = HttpContext.Request.Headers.Authorization.ToString();
         if (!string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
