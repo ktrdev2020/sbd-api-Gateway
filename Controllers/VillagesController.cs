@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Gateway.Data;
 using Gateway.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -96,4 +98,144 @@ public class VillageCreateRequest
     public int MooNo { get; set; }
     public string NameTh { get; set; } = string.Empty;
     public string? Code { get; set; }
+}
+
+/// <summary>
+/// Plan #26 Phase 3 — DOPA village seeder. Fetches official open data from
+/// catalog.dopa.go.th (gis-01 dataset) and imports into Villages master.
+/// Idempotent: skips existing village codes; matches subdistrict by (district.Code + subdistrict.NameTh)
+/// since SBD's SubDistricts.Code uses internal alphabetical numbering, not DOPA tcode.
+/// </summary>
+[ApiController]
+[Route("api/v1/villages/seed-from-dopa")]
+[Authorize]  // TODO: restrict to SuperAdmin once HCD wired
+public class VillagesSeederController : ControllerBase
+{
+    private readonly GatewayDbContext _db;
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly ILogger<VillagesSeederController> _logger;
+
+    public VillagesSeederController(SbdDbContext db, IHttpClientFactory httpFactory, ILogger<VillagesSeederController> logger)
+    {
+        _db = (GatewayDbContext)db;
+        _httpFactory = httpFactory;
+        _logger = logger;
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<DopaSeedResult>> SeedFromDopa(
+        [FromQuery] string url,
+        [FromQuery] string? districtFilter)  // optional comma-separated district codes (e.g. "3305,3322,3326")
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return BadRequest(new { message = "url query param required" });
+
+        // Fetch JSON
+        var http = _httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromMinutes(2);
+        string json;
+        try { json = await http.GetStringAsync(url); }
+        catch (Exception ex) { return BadRequest(new { message = $"Fetch failed: {ex.Message}" }); }
+
+        List<DopaVillageRow>? rows;
+        try
+        {
+            rows = JsonSerializer.Deserialize<List<DopaVillageRow>>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex) { return BadRequest(new { message = $"Parse failed: {ex.Message}" }); }
+        if (rows == null) return BadRequest(new { message = "Empty/null JSON" });
+
+        var allowedDistricts = string.IsNullOrWhiteSpace(districtFilter)
+            ? null : districtFilter.Split(',').Select(s => s.Trim()).ToHashSet();
+
+        // Build subdistrict lookup: key = "{districtCode}|{subdistrictNameTh}"
+        var subdistMap = await _db.SubDistricts.AsNoTracking()
+            .Include(sd => sd.District)
+            .Select(sd => new { sd.Id, sd.NameTh, DistrictCode = sd.District.Code })
+            .ToListAsync();
+        var subdistByKey = subdistMap.ToDictionary(
+            x => $"{x.DistrictCode}|{x.NameTh}",
+            x => x.Id);
+
+        // Existing village codes for idempotency
+        var existingCodes = (await _db.Villages.AsNoTracking()
+            .Where(v => v.Code != null).Select(v => v.Code!).ToListAsync())
+            .ToHashSet();
+
+        int inserted = 0, skippedExist = 0, skippedNoSubdist = 0, skippedFiltered = 0, skippedBadCode = 0;
+        var unmappedSubdistricts = new HashSet<string>();
+        var newVillages = new List<Village>();
+
+        foreach (var r in rows)
+        {
+            if (string.IsNullOrWhiteSpace(r.mcode) || string.IsNullOrWhiteSpace(r.mname)) continue;
+            if (allowedDistricts != null && !allowedDistricts.Contains(r.acode ?? "")) { skippedFiltered++; continue; }
+            if (existingCodes.Contains(r.mcode)) { skippedExist++; continue; }
+
+            // Parse moo from mcode last 2 digits
+            if (r.mcode.Length < 8 || !int.TryParse(r.mcode[^2..], out var moo) || moo < 1) { skippedBadCode++; continue; }
+
+            var key = $"{r.acode}|{r.tname}";
+            if (!subdistByKey.TryGetValue(key, out var sdId))
+            {
+                skippedNoSubdist++;
+                unmappedSubdistricts.Add(key);
+                continue;
+            }
+
+            var nameTh = r.mname.StartsWith("บ้าน") ? r.mname : "บ้าน" + r.mname;
+            newVillages.Add(new Village
+            {
+                SubDistrictId = sdId,
+                MooNo = moo,
+                NameTh = nameTh,
+                Code = r.mcode,
+                IsActive = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+            existingCodes.Add(r.mcode);  // dedupe within this batch
+            inserted++;
+        }
+
+        if (newVillages.Count > 0)
+        {
+            await _db.Villages.AddRangeAsync(newVillages);
+            await _db.SaveChangesAsync();
+        }
+
+        return Ok(new DopaSeedResult
+        {
+            TotalRows = rows.Count,
+            Inserted = inserted,
+            SkippedExisting = skippedExist,
+            SkippedNoSubdistMatch = skippedNoSubdist,
+            SkippedFiltered = skippedFiltered,
+            SkippedBadCode = skippedBadCode,
+            UnmappedSubdistrictKeys = unmappedSubdistricts.Take(20).ToList(),
+        });
+    }
+
+    private class DopaVillageRow
+    {
+        [JsonPropertyName("pcode")] public string? pcode { get; set; }
+        [JsonPropertyName("pname")] public string? pname { get; set; }
+        [JsonPropertyName("acode")] public string? acode { get; set; }
+        [JsonPropertyName("aname")] public string? aname { get; set; }
+        [JsonPropertyName("tcode")] public string? tcode { get; set; }
+        [JsonPropertyName("tname")] public string? tname { get; set; }
+        [JsonPropertyName("mcode")] public string? mcode { get; set; }
+        [JsonPropertyName("mname")] public string? mname { get; set; }
+    }
+}
+
+public class DopaSeedResult
+{
+    public int TotalRows { get; set; }
+    public int Inserted { get; set; }
+    public int SkippedExisting { get; set; }
+    public int SkippedNoSubdistMatch { get; set; }
+    public int SkippedFiltered { get; set; }
+    public int SkippedBadCode { get; set; }
+    public List<string> UnmappedSubdistrictKeys { get; set; } = new();
 }
