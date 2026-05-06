@@ -177,65 +177,78 @@ public class VillagesSeederController : ControllerBase
             x => $"{x.DistrictCode}|{x.NameTh}",
             x => x.Id);
 
-        // Existing village codes for idempotency
-        var existingCodes = (await _db.Villages.AsNoTracking()
-            .Where(v => v.Code != null).Select(v => v.Code!).ToListAsync())
-            .ToHashSet();
+        // Existing villages keyed by (SubDistrictId, MooNo) for upsert
+        var existingByKey = (await _db.Villages
+            .Where(v => true)
+            .ToListAsync())
+            .ToDictionary(v => $"{v.SubDistrictId}|{v.MooNo}", v => v);
 
-        int inserted = 0, skippedExist = 0, skippedNoSubdist = 0, skippedFiltered = 0, skippedBadCode = 0;
+        int inserted = 0, updated = 0, skippedNoSubdist = 0, skippedFiltered = 0, skippedBadCode = 0;
         var unmappedSubdistricts = new HashSet<string>();
-        var newVillages = new List<Village>();
+        var addedKeysThisBatch = new HashSet<string>();
 
         foreach (var r in rows)
         {
             if (string.IsNullOrWhiteSpace(r.mcode) || string.IsNullOrWhiteSpace(r.mname)) continue;
             if (allowedDistricts != null && !allowedDistricts.Contains(r.acode ?? "")) { skippedFiltered++; continue; }
-            if (existingCodes.Contains(r.mcode)) { skippedExist++; continue; }
 
             // Parse moo from mcode last 2 digits
             if (r.mcode.Length < 8 || !int.TryParse(r.mcode[^2..], out var moo) || moo < 1) { skippedBadCode++; continue; }
 
-            var key = $"{r.acode}|{r.tname}";
-            if (!subdistByKey.TryGetValue(key, out var sdId))
+            var subKey = $"{r.acode}|{r.tname}";
+            if (!subdistByKey.TryGetValue(subKey, out var sdId))
             {
                 skippedNoSubdist++;
-                unmappedSubdistricts.Add(key);
+                unmappedSubdistricts.Add(subKey);
                 continue;
             }
 
+            var rowKey = $"{sdId}|{moo}";
+            if (addedKeysThisBatch.Contains(rowKey)) continue;  // dup within batch
+            addedKeysThisBatch.Add(rowKey);
+
             var nameTh = r.mname.StartsWith("บ้าน") ? r.mname : "บ้าน" + r.mname;
-            newVillages.Add(new Village
+
+            if (existingByKey.TryGetValue(rowKey, out var existing))
             {
-                SubDistrictId = sdId,
-                MooNo = moo,
-                NameTh = nameTh,
-                Code = r.mcode,
-                IsActive = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-            });
-            existingCodes.Add(r.mcode);  // dedupe within this batch
-            inserted++;
+                // Upsert: refresh Code + NameTh if different
+                if (existing.Code != r.mcode || existing.NameTh != nameTh)
+                {
+                    existing.Code = r.mcode;
+                    existing.NameTh = nameTh;
+                    updated++;
+                }
+            }
+            else
+            {
+                _db.Villages.Add(new Village
+                {
+                    SubDistrictId = sdId,
+                    MooNo = moo,
+                    NameTh = nameTh,
+                    Code = r.mcode,
+                    IsActive = true,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                });
+                inserted++;
+            }
         }
 
-        if (newVillages.Count > 0)
+        try
         {
-            try
-            {
-                await _db.Villages.AddRangeAsync(newVillages);
-                await _db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "DOPA seeder: SaveChanges failed for {Count} villages", newVillages.Count);
-                return StatusCode(500, new { message = $"DB save failed: {ex.Message}", inner = ex.InnerException?.Message });
-            }
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "DOPA seeder: SaveChanges failed");
+            return StatusCode(500, new { message = $"DB save failed: {ex.Message}", inner = ex.InnerException?.Message });
         }
 
         return Ok(new DopaSeedResult
         {
             TotalRows = rows.Count,
             Inserted = inserted,
-            SkippedExisting = skippedExist,
+            Updated = updated,
             SkippedNoSubdistMatch = skippedNoSubdist,
             SkippedFiltered = skippedFiltered,
             SkippedBadCode = skippedBadCode,
@@ -260,7 +273,7 @@ public class DopaSeedResult
 {
     public int TotalRows { get; set; }
     public int Inserted { get; set; }
-    public int SkippedExisting { get; set; }
+    public int Updated { get; set; }
     public int SkippedNoSubdistMatch { get; set; }
     public int SkippedFiltered { get; set; }
     public int SkippedBadCode { get; set; }
