@@ -1,4 +1,6 @@
+using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Text.Json;
 using Gateway.Data;
 using Gateway.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -21,12 +23,26 @@ public class SchoolHomeroomController : ControllerBase
 {
     private readonly GatewayDbContext _db;
     private readonly ICapabilityService _capabilities;
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly IConfiguration _config;
+    private readonly ILogger<SchoolHomeroomController> _logger;
 
-    public SchoolHomeroomController(SbdDbContext db, ICapabilityService capabilities)
+    public SchoolHomeroomController(
+        SbdDbContext db, ICapabilityService capabilities,
+        IHttpClientFactory httpFactory, IConfiguration config,
+        ILogger<SchoolHomeroomController> logger)
     {
         _db = (GatewayDbContext)db;
         _capabilities = capabilities;
+        _httpFactory = httpFactory;
+        _config = config;
+        _logger = logger;
     }
+
+    private string StudentApiBase =>
+        _config["ServiceUrls:StudentApi"]
+        ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
+        ?? "http://localhost:5032";
 
     private int? CurrentUserId =>
         int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value, out var id) ? id : null;
@@ -150,6 +166,93 @@ public class SchoolHomeroomController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return await List(schoolCode, req.AcademicYear, req.Term, ct);
+    }
+
+    public record TeacherPickDto(int PersonnelId, string FirstName, string LastName, string? Photo, string? Position, int? PersonnelTypeId);
+    public record ClassroomDto(long GradeLevelId, string? GradeName, int LevelOrder, short ClassroomNumber, int StudentCount);
+    public record SetupDto(
+        IReadOnlyList<ClassroomDto> Classrooms,
+        IReadOnlyList<TeacherPickDto> Teachers,
+        IReadOnlyList<HomeroomAssignmentDto> Assignments);
+
+    /// <summary>
+    /// One-shot bootstrap for the SchoolAdmin assignment grid.
+    /// Returns classrooms (from StudentApi), teachers in this school
+    /// (from Gateway), and current assignments. Reduces UI from 3 calls to 1.
+    /// </summary>
+    [HttpGet("setup")]
+    public async Task<ActionResult<SetupDto>> Setup(
+        string schoolCode, [FromQuery] short academicYear, CancellationToken ct)
+    {
+        var smis = await _db.Schools.AsNoTracking()
+            .Where(s => s.SchoolCode == schoolCode)
+            .Select(s => s.SmisCode ?? schoolCode)
+            .FirstOrDefaultAsync(ct) ?? schoolCode;
+
+        var classroomsTask = FetchClassroomsAsync(smis, academicYear, ct);
+
+        var teachersTask = (
+            from p in _db.Personnel.AsNoTracking()
+            join psa in _db.PersonnelSchoolAssignments.AsNoTracking()
+                on p.Id equals psa.PersonnelId
+            where psa.SchoolCode == schoolCode && psa.IsPrimary && p.TrashedAt == null
+            orderby p.FirstName
+            select new TeacherPickDto(p.Id, p.FirstName, p.LastName, p.Photo, psa.Position, p.PersonnelTypeId)
+        ).ToListAsync(ct);
+
+        var assignmentsTask = (
+            from a in _db.TeacherHomeroomAssignments.AsNoTracking()
+            join p in _db.Personnel.AsNoTracking() on a.PersonnelId equals p.Id
+            where a.SchoolCode == schoolCode && a.AcademicYear == academicYear && a.DeletedAt == null
+            orderby a.GradeLevelId, a.ClassroomNumber, p.FirstName
+            select new HomeroomAssignmentDto(
+                a.Id, p.Id, p.FirstName, p.LastName, p.Photo,
+                a.SchoolCode, a.AcademicYear, a.Term,
+                a.GradeLevelId, a.ClassroomNumber, a.Role,
+                a.AssignedByUserId, a.AssignedAt, a.EndDate)
+        ).ToListAsync(ct);
+
+        await Task.WhenAll(classroomsTask, teachersTask, assignmentsTask);
+
+        return Ok(new SetupDto(
+            await classroomsTask,
+            await teachersTask,
+            await assignmentsTask));
+    }
+
+    private async Task<IReadOnlyList<ClassroomDto>> FetchClassroomsAsync(string smis, short year, CancellationToken ct)
+    {
+        var http = _httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(8);
+        var url = $"{StudentApiBase}/api/v1/school/{smis}/classrooms?academicYear={year}";
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var auth = HttpContext.Request.Headers.Authorization.ToString();
+        if (!string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            req.Headers.Authorization = AuthenticationHeaderValue.Parse(auth);
+
+        var list = new List<ClassroomDto>();
+        try
+        {
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return list;
+            using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return list;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var gid = el.TryGetProperty("gradeLevelId", out var g) ? g.GetInt64() : 0L;
+                var gname = el.TryGetProperty("gradeName", out var gn) ? gn.GetString() : null;
+                var ord = el.TryGetProperty("levelOrder", out var lo) ? lo.GetInt32() : 0;
+                var cn = el.TryGetProperty("classroomNumber", out var c) ? c.GetInt16() : (short)0;
+                var sc = el.TryGetProperty("studentCount", out var s) ? s.GetInt32() : 0;
+                list.Add(new ClassroomDto(gid, gname, ord, cn, sc));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[SchoolHomeroom] StudentApi classrooms unavailable for {Smis}/{Year}", smis, year);
+        }
+        return list;
     }
 
     /// <summary>
