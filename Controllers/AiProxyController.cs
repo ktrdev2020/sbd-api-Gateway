@@ -125,6 +125,42 @@ public class AiProxyController : ControllerBase
     }
 
     /// <summary>
+    /// Plan #34 AI-2 — Aplan AI drafter proxy. Frontend calls
+    /// POST /api/v1/ai/aplan/projects/{id}/draft on Gateway with
+    /// { role, userHint } body; we forward to AiService which calls
+    /// MCP draft-context + Gemini + schema validator.
+    /// </summary>
+    [HttpPost("aplan/projects/{projectId:int}/draft")]
+    public async Task<ActionResult> AplanDraft(
+        int projectId, [FromBody] AplanDraftProxyRequest request, CancellationToken ct)
+    {
+        var aiUrl = _configuration["ServiceUrls:AiService"] ?? "http://svc-sbd-ai";
+        var rawJwt = HttpContext.Request.Headers.Authorization
+            .FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase)
+            ?? string.Empty;
+
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(60);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", rawJwt);
+
+        var bodyJson = JsonSerializer.Serialize(request, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        });
+
+        var response = await client.PostAsync(
+            $"{aiUrl}/api/ai/aplan/projects/{projectId}/draft",
+            new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        return response.IsSuccessStatusCode
+            ? Content(responseBody, "application/json")
+            : StatusCode((int)response.StatusCode, responseBody);
+    }
+
+    /// <summary>
     /// SSE streaming — proxies text/event-stream from AiService to Angular.
     /// Angular reads events: thinking → tool_call → tool_result → final
     /// </summary>
@@ -295,3 +331,5 @@ public record AiPublicAssistRequest(
     int? AreaId = null,
     IReadOnlyList<ConversationTurn>? History = null
 );
+
+public record AplanDraftProxyRequest(string? Role, string? UserHint);
