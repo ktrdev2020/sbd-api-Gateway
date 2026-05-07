@@ -94,6 +94,37 @@ public class AiProxyController : ControllerBase
     }
 
     /// <summary>
+    /// Plan #29 Track B-2 — AI project review proxy. Frontend calls
+    /// POST /api/v1/ai/projects/{id}/review on Gateway; we forward to
+    /// AiService which orchestrates MCP tool calls + Gemini + Redis cache.
+    /// JWT carried through so the entire chain (Gateway → AiService →
+    /// McpService → BudgetApi/Gateway) re-validates per hop.
+    /// </summary>
+    [HttpPost("projects/{projectId:int}/review")]
+    public async Task<ActionResult> ProjectReview(int projectId, CancellationToken ct)
+    {
+        var aiUrl = _configuration["ServiceUrls:AiService"] ?? "http://svc-sbd-ai";
+        var rawJwt = HttpContext.Request.Headers.Authorization
+            .FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase)
+            ?? string.Empty;
+
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(60); // Gemini cold call can take ~10-15s
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", rawJwt);
+
+        var response = await client.PostAsync(
+            $"{aiUrl}/api/ai/projects/{projectId}/review",
+            new StringContent(string.Empty, Encoding.UTF8, "application/json"),
+            ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        return response.IsSuccessStatusCode
+            ? Content(responseBody, "application/json")
+            : StatusCode((int)response.StatusCode, responseBody);
+    }
+
+    /// <summary>
     /// SSE streaming — proxies text/event-stream from AiService to Angular.
     /// Angular reads events: thinking → tool_call → tool_result → final
     /// </summary>
