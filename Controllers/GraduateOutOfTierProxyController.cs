@@ -47,7 +47,9 @@ public class GraduateOutOfTierProxyController : ControllerBase
         CancellationToken ct = default)
     {
         // Resolve declared tiers from Schools shadow props
-        var school = await _db.Schools.AsNoTracking()
+        // AsTracking required so shadow properties (Teaches*) hydrate.
+        // AsNoTracking skips them and Entry().Property() returns null.
+        var school = await _db.Schools.AsTracking()
             .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode, ct);
         if (school is null) return NotFound(new { error = "School not found" });
 
