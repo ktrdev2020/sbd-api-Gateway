@@ -358,7 +358,9 @@ public class SchoolController : ControllerBase
     [HttpGet("{schoolCode}/profile-extended")]
     public async Task<ActionResult<SchoolProfileExtendedDto>> GetProfileExtended(string schoolCode)
     {
-        var school = await _context.Schools.AsNoTracking()
+        // AsTracking required so shadow properties (History, LandRai, Teaches*)
+        // load — AsNoTracking skips them and Entry().Property() returns null.
+        var school = await _context.Schools.AsTracking()
             .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school == null) return NotFound(new { message = "School not found" });
 
