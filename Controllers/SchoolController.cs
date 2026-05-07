@@ -376,6 +376,10 @@ public class SchoolController : ControllerBase
             EstablishedDate = school.EstablishedDate,
             Latitude = school.Latitude,
             Longitude = school.Longitude,
+            TeachesPreschool = entry.Property<bool?>("TeachesPreschool").CurrentValue,
+            TeachesPrimary = entry.Property<bool?>("TeachesPrimary").CurrentValue,
+            TeachesLowerSecondary = entry.Property<bool?>("TeachesLowerSecondary").CurrentValue,
+            TeachesUpperSecondary = entry.Property<bool?>("TeachesUpperSecondary").CurrentValue,
         });
     }
 
@@ -393,6 +397,10 @@ public class SchoolController : ControllerBase
         entry.Property<int?>("LandRai").CurrentValue = request.LandRai;
         entry.Property<int?>("LandNgan").CurrentValue = request.LandNgan;
         entry.Property<decimal?>("LandSqwa").CurrentValue = request.LandSqwa;
+        entry.Property<bool?>("TeachesPreschool").CurrentValue = request.TeachesPreschool;
+        entry.Property<bool?>("TeachesPrimary").CurrentValue = request.TeachesPrimary;
+        entry.Property<bool?>("TeachesLowerSecondary").CurrentValue = request.TeachesLowerSecondary;
+        entry.Property<bool?>("TeachesUpperSecondary").CurrentValue = request.TeachesUpperSecondary;
 
         school.TaxId = request.TaxId;
         school.SchoolCluster = request.SchoolCluster;
@@ -415,6 +423,10 @@ public class SchoolController : ControllerBase
             EstablishedDate = school.EstablishedDate,
             Latitude = school.Latitude,
             Longitude = school.Longitude,
+            TeachesPreschool = request.TeachesPreschool,
+            TeachesPrimary = request.TeachesPrimary,
+            TeachesLowerSecondary = request.TeachesLowerSecondary,
+            TeachesUpperSecondary = request.TeachesUpperSecondary,
         });
     }
 
@@ -803,6 +815,12 @@ public class SchoolProfileExtendedDto
     public DateOnly? EstablishedDate { get; set; }
     public decimal? Latitude { get; set; }
     public decimal? Longitude { get; set; }
+
+    // Plan #31 — Manual tier checklist (school-declared source of truth)
+    public bool? TeachesPreschool { get; set; }
+    public bool? TeachesPrimary { get; set; }
+    public bool? TeachesLowerSecondary { get; set; }
+    public bool? TeachesUpperSecondary { get; set; }
 }
 
 public class SchoolProfileExtendedRequest
@@ -816,6 +834,12 @@ public class SchoolProfileExtendedRequest
     public DateOnly? EstablishedDate { get; set; }
     public decimal? Latitude { get; set; }
     public decimal? Longitude { get; set; }
+
+    // Plan #31 — Manual tier checklist (school-declared source of truth)
+    public bool? TeachesPreschool { get; set; }
+    public bool? TeachesPrimary { get; set; }
+    public bool? TeachesLowerSecondary { get; set; }
+    public bool? TeachesUpperSecondary { get; set; }
 }
 
 public record SchoolListItemDto(

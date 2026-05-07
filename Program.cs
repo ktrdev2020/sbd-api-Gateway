@@ -589,6 +589,12 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LandNgan"" INTEGER;
         ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LandSqwa"" NUMERIC(8,2);
 
+        -- Plan #31 — Manual tier checklist (school-declared truth, overrides derived label)
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""TeachesPreschool"" BOOLEAN;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""TeachesPrimary"" BOOLEAN;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""TeachesLowerSecondary"" BOOLEAN;
+        ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""TeachesUpperSecondary"" BOOLEAN;
+
         -- school_identities (วิสัยทัศน์ / ปรัชญา / คำขวัญ / อักษรย่อ / สี / ต้นไม้ / ดอกไม้ / ชุดนักเรียน)
         CREATE TABLE IF NOT EXISTS school_identities (
             id BIGSERIAL PRIMARY KEY,

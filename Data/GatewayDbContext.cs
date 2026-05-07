@@ -46,6 +46,12 @@ public class GatewayDbContext : SbdDbContext
             entity.Property<int?>("LandRai").HasColumnName("LandRai");
             entity.Property<int?>("LandNgan").HasColumnName("LandNgan");
             entity.Property<decimal?>("LandSqwa").HasColumnType("numeric(8,2)").HasColumnName("LandSqwa");
+
+            // ── Plan #31 — Manual tier checklist (school-declared source of truth) ──
+            entity.Property<bool?>("TeachesPreschool").HasColumnName("TeachesPreschool");
+            entity.Property<bool?>("TeachesPrimary").HasColumnName("TeachesPrimary");
+            entity.Property<bool?>("TeachesLowerSecondary").HasColumnName("TeachesLowerSecondary");
+            entity.Property<bool?>("TeachesUpperSecondary").HasColumnName("TeachesUpperSecondary");
         });
 
         // ── Plan #27 — Personnel.CoverPhoto (shadow property; raw-SQL migrated) ──
