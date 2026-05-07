@@ -206,10 +206,17 @@ public class MePermissionsController : ControllerBase
 
             if (resolvedAreaId.HasValue)
             {
-                policies = await _context.AreaPermissionPolicies
+                // Per-school override (SchoolCode == current user school) wins over area-level (SchoolCode == null).
+                var rawPolicies = await _context.AreaPermissionPolicies
                     .AsNoTracking()
-                    .Where(p => p.AreaId == resolvedAreaId.Value)
-                    .ToDictionaryAsync(p => p.PermissionCode, p => p.AllowSchoolAdmin, ct);
+                    .Where(p => p.AreaId == resolvedAreaId.Value
+                             && (p.SchoolCode == null || p.SchoolCode == schoolCode))
+                    .ToListAsync(ct);
+                policies = rawPolicies
+                    .GroupBy(p => p.PermissionCode)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => (g.FirstOrDefault(p => p.SchoolCode == schoolCode) ?? g.First()).AllowSchoolAdmin);
             }
         }
 
