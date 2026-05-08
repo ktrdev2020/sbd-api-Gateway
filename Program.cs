@@ -1796,6 +1796,26 @@ if (enableSwagger)
 }
 
 app.UseCors();
+
+// Enable request-body buffering for proxy paths so the catch-all proxy
+// controllers can read the body even after some upstream filter (model
+// binding, antiforgery, etc.) has already drained it. Without this, the
+// budget proxy reads bytes=0 for multipart/form-data uploads and the
+// downstream service's [ApiController] returns 400 "file field required".
+// Limited to /api/v2/budget/* + matching POST/PUT/PATCH so non-proxy
+// endpoints aren't burdened with the FileBufferingReadStream wrapper.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    var method = context.Request.Method;
+    var isProxy = path.StartsWithSegments("/api/v2/budget");
+    var isMutating = HttpMethods.IsPost(method)
+        || HttpMethods.IsPut(method)
+        || HttpMethods.IsPatch(method);
+    if (isProxy && isMutating) context.Request.EnableBuffering();
+    await next();
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
