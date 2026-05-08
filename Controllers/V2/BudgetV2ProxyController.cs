@@ -55,12 +55,22 @@ public class BudgetV2ProxyController : ControllerBase
 
         if (method != HttpMethod.Get && method != HttpMethod.Delete && Request.ContentLength > 0)
         {
-            using var reader = new StreamReader(Request.Body);
-            var body = await reader.ReadToEndAsync(ct);
-            req.Content = new StringContent(
-                body,
-                System.Text.Encoding.UTF8,
-                Request.ContentType ?? "application/json");
+            // Stream the request body as raw bytes — never decode as UTF-8.
+            // Decoding via StreamReader corrupts binary uploads (the .docx
+            // template upload endpoint takes multipart/form-data containing
+            // a ZIP-format file; UTF-8 decoding turns every byte > 0x7F into
+            // EF BF BD and shreds the multipart boundaries). Mirrors the
+            // response-stream fix from Plan #15 D10 (memory:
+            // gateway-proxy-binary-stream).
+            req.Content = new StreamContent(Request.Body);
+            if (!string.IsNullOrEmpty(Request.ContentType))
+            {
+                req.Content.Headers.TryAddWithoutValidation("Content-Type", Request.ContentType);
+            }
+            if (Request.ContentLength is { } len)
+            {
+                req.Content.Headers.ContentLength = len;
+            }
         }
 
         try
