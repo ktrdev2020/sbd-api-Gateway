@@ -55,28 +55,38 @@ public class BudgetV2ProxyController : ControllerBase
 
         if (method != HttpMethod.Get && method != HttpMethod.Delete && Request.ContentLength > 0)
         {
-            // Buffer body as raw bytes — never decode as UTF-8. The previous
-            // ReadToEndAsync corrupted binary uploads (multipart/form-data
-            // .docx template upload). StreamContent + TryAddWithoutValidation
-            // didn't fix it because the multipart Content-Type carries a
-            // `boundary=...` parameter that HttpClient demands be set via
-            // MediaTypeHeaderValue.Parse — and StreamContent + manual
-            // ContentLength sometimes desyncs vs actual stream bytes,
-            // causing HttpRequestException → 502 from the catch below.
+            // Buffer body as raw bytes — never decode as UTF-8.
             //
-            // ByteArrayContent is the most reliable shape: buffer once
-            // (request size limit on the upload action caps this at 10 MB),
-            // attach properly-parsed Content-Type, let HttpClient pick the
-            // transfer encoding. Mirrors response-stream fix from Plan #15
-            // D10 (memory: gateway-proxy-binary-stream).
+            // EnableBuffering() + Position=0 guards against the case where
+            // some upstream filter (model binding for [ApiController] when
+            // it sees multipart/form-data, etc.) drained the stream before
+            // the controller body executes. With buffering enabled the
+            // stream is rewindable, so the copy is reliable regardless of
+            // what touched the body earlier in the pipeline.
+            //
+            // Content-Type is forwarded *raw* via TryAddWithoutValidation —
+            // not via MediaTypeHeaderValue.Parse — because the Parse path
+            // adds quotes around parameter values like the multipart
+            // `boundary=...` token. ASP.NET Core's multipart reader on the
+            // BudgetApi side then can't match the quoted boundary against
+            // the literal `--boundary` lines in the body bytes, leaving
+            // IFormFile null and the upload action returning 400.
+            //
+            // (Mirrors response-stream fix from Plan #15 D10 — memory:
+            // gateway-proxy-binary-stream.)
+            Request.EnableBuffering();
+            Request.Body.Position = 0;
             using var bodyBuffer = new MemoryStream();
             await Request.Body.CopyToAsync(bodyBuffer, ct);
             req.Content = new ByteArrayContent(bodyBuffer.ToArray());
+            req.Content.Headers.Remove("Content-Type");
             if (!string.IsNullOrEmpty(Request.ContentType))
             {
-                req.Content.Headers.ContentType =
-                    System.Net.Http.Headers.MediaTypeHeaderValue.Parse(Request.ContentType);
+                req.Content.Headers.TryAddWithoutValidation("Content-Type", Request.ContentType);
             }
+            _logger.LogInformation(
+                "[BudgetV2Proxy] Forwarded body · contentType={ContentType} bytes={Bytes}",
+                Request.ContentType, bodyBuffer.Length);
         }
 
         try
