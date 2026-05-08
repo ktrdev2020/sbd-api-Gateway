@@ -55,21 +55,27 @@ public class BudgetV2ProxyController : ControllerBase
 
         if (method != HttpMethod.Get && method != HttpMethod.Delete && Request.ContentLength > 0)
         {
-            // Stream the request body as raw bytes — never decode as UTF-8.
-            // Decoding via StreamReader corrupts binary uploads (the .docx
-            // template upload endpoint takes multipart/form-data containing
-            // a ZIP-format file; UTF-8 decoding turns every byte > 0x7F into
-            // EF BF BD and shreds the multipart boundaries). Mirrors the
-            // response-stream fix from Plan #15 D10 (memory:
-            // gateway-proxy-binary-stream).
-            req.Content = new StreamContent(Request.Body);
+            // Buffer body as raw bytes — never decode as UTF-8. The previous
+            // ReadToEndAsync corrupted binary uploads (multipart/form-data
+            // .docx template upload). StreamContent + TryAddWithoutValidation
+            // didn't fix it because the multipart Content-Type carries a
+            // `boundary=...` parameter that HttpClient demands be set via
+            // MediaTypeHeaderValue.Parse — and StreamContent + manual
+            // ContentLength sometimes desyncs vs actual stream bytes,
+            // causing HttpRequestException → 502 from the catch below.
+            //
+            // ByteArrayContent is the most reliable shape: buffer once
+            // (request size limit on the upload action caps this at 10 MB),
+            // attach properly-parsed Content-Type, let HttpClient pick the
+            // transfer encoding. Mirrors response-stream fix from Plan #15
+            // D10 (memory: gateway-proxy-binary-stream).
+            using var bodyBuffer = new MemoryStream();
+            await Request.Body.CopyToAsync(bodyBuffer, ct);
+            req.Content = new ByteArrayContent(bodyBuffer.ToArray());
             if (!string.IsNullOrEmpty(Request.ContentType))
             {
-                req.Content.Headers.TryAddWithoutValidation("Content-Type", Request.ContentType);
-            }
-            if (Request.ContentLength is { } len)
-            {
-                req.Content.Headers.ContentLength = len;
+                req.Content.Headers.ContentType =
+                    System.Net.Http.Headers.MediaTypeHeaderValue.Parse(Request.ContentType);
             }
         }
 
