@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using SBD.Application.Interfaces;
+using Gateway.Services;
 
 namespace Gateway.Controllers;
 
@@ -36,9 +36,9 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
     /// <summary>Public read — anyone with a valid client can fetch.</summary>
     [HttpGet("system-settings")]
     [AllowAnonymous]
-    public async Task<ActionResult<SystemSettingsDto>> Get(CancellationToken ct)
+    public async Task<ActionResult<SystemSettingsDto>> Get()
     {
-        var stored = await cache.GetAsync<Dictionary<string, object>>(CacheKey, ct) ?? new();
+        var stored = await cache.GetAsync<Dictionary<string, object>>(CacheKey) ?? new();
         return Ok(new SystemSettingsDto(
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
             CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"])
@@ -49,10 +49,9 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
     [HttpPut("admin/system-settings")]
     [Authorize(Roles = "super_admin,SuperAdmin")]
     public async Task<ActionResult<SystemSettingsDto>> Update(
-        [FromBody] UpdateSystemSettingsRequest req,
-        CancellationToken ct)
+        [FromBody] UpdateSystemSettingsRequest req)
     {
-        var stored = await cache.GetAsync<Dictionary<string, object>>(CacheKey, ct) ?? new();
+        var stored = await cache.GetAsync<Dictionary<string, object>>(CacheKey) ?? new();
 
         if (req.CurrentAcademicYear is int year)
         {
@@ -67,7 +66,7 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
             stored["currentTerm"] = term;
         }
 
-        await cache.SetAsync(CacheKey, stored, TimeSpan.FromDays(3650), ct);
+        await cache.SetAsync(CacheKey, stored, TimeSpan.FromDays(3650));
         logger.LogInformation("System settings updated by {User}: AY={AY} Term={Term}",
             User.Identity?.Name, stored.GetValueOrDefault("currentAcademicYear"), stored.GetValueOrDefault("currentTerm"));
 
