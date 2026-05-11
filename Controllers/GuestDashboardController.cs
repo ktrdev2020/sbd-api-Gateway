@@ -166,6 +166,50 @@ public class GuestDashboardController : ControllerBase
         // Cross-pod · sizes + levels + grades from StudentApi (DMC).
         var studentBundle = await FetchStudentBundleAsync(ct);
 
+        // Plan #44 S4 — academic-rank (วิทยฐานะ) breakdown.
+        // Personnel.AcademicStandingTypeId is currently <1% populated in
+        // production (0.04% as of 2026-05-11) — chart is rendered as a
+        // placeholder card with the coming-soon note. We still emit slices
+        // for the few records that exist so the chart fills in as HR imports.
+        var rankRaw = await (
+            from p in _db.Personnel.AsNoTracking()
+            join psa in _db.Set<SBD.Domain.Entities.PersonnelSchoolAssignment>().AsNoTracking()
+                on p.Id equals psa.PersonnelId
+            join s in schoolsQ on psa.SchoolCode equals s.SchoolCode
+            where p.TrashedAt == null
+              && (psa.EndDate == null || psa.EndDate >= DateOnly.FromDateTime(DateTime.Today))
+            select new { p.AcademicStandingTypeId }
+        ).ToListAsync(ct);
+        var rankTotal = rankRaw.Count;
+        var rankFilled = rankRaw.Count(r => r.AcademicStandingTypeId != null);
+        var rankPct = rankTotal > 0 ? (double)rankFilled / rankTotal : 0;
+        IReadOnlyList<DashboardSliceDto> academicRanks = Array.Empty<DashboardSliceDto>();
+        if (rankFilled > 0)
+        {
+            var rankLookup = await _db.Set<SBD.Domain.Entities.AcademicStandingType>()
+                .AsNoTracking()
+                .ToDictionaryAsync(t => t.Id, t => t, ct);
+            var rankPalette = new[] { "#94a3b8", "#34d399", "#22d3ee", "#a78bfa", "#6366f1" };
+            academicRanks = rankRaw
+                .Where(r => r.AcademicStandingTypeId != null)
+                .GroupBy(r => r.AcademicStandingTypeId!.Value)
+                .Select((g, i) =>
+                {
+                    var name = rankLookup.TryGetValue(g.Key, out var t) ? t.NameTh : "ไม่ระบุ";
+                    return new DashboardSliceDto(
+                        Id: $"rank-{g.Key}",
+                        Label: name,
+                        Value: g.Count(),
+                        ColorHint: rankPalette[i % rankPalette.Length],
+                        SortOrder: g.Key);
+                })
+                .OrderBy(s => s.SortOrder)
+                .ToList();
+        }
+        var academicRankNote = rankPct < 0.05
+            ? $"ข้อมูลวิทยฐานะกรอกแล้ว {rankFilled}/{rankTotal:N0} ({rankPct:P1}) — เร็วๆ นี้: รอ HR import ครบ"
+            : null;
+
         return Ok(new DashboardDistributionsDto(
             AcademicYear: CurrentDmcYear,
             Term: 2,
@@ -173,7 +217,9 @@ public class GuestDashboardController : ControllerBase
             StudentLevels: studentBundle.Levels,
             StudentGrades: studentBundle.Grades,
             PersonnelTypes: personnelTypes,
-            Districts: districts));
+            Districts: districts,
+            AcademicRanks: academicRanks,
+            AcademicRankNote: academicRankNote));
     }
 
     // ── 3. Trends (multi-year line chart) ─────────────────────────────────
@@ -351,25 +397,36 @@ public class GuestDashboardController : ControllerBase
         return bundle;
     }
 
+    // Plan #44 S4: position-first classifier so positions like "ครูผู้สอน",
+    // "ครูอัตราจ้าง", "ครูขาดแคลน" land in "ครู" instead of "บุคลากรสนับสนุน"
+    // (these have PersonnelType=Staff but are functionally teachers).
     private static (string Name, int Order, string Color) ClassifyPersonnel(string code, string position)
     {
-        switch (code)
+        if (position.Contains("ผู้อำนวยการ"))
+            return position.Contains("รอง")
+                ? ("รองผู้อำนวยการ", 1, "#a78bfa")
+                : ("ผู้อำนวยการ", 0, "#6366f1");
+        if (position.Contains("ภารโรง") || position.Contains("นักการ"))
+            return ("นักการภารโรง", 6, "#fb7185");
+        if (position.Contains("ธุรการ"))
+            return ("ธุรการ", 5, "#f472b6");
+        if (position.Contains("พี่เลี้ยง"))
+            return ("พี่เลี้ยง", 7, "#fda4af");
+        if (position.Contains("ครู"))
+            return ("ครู", 2, "#34d399");
+        if (position.Contains("ลูกจ้างชั่วคราว") || position.Contains("อัตราจ้าง"))
+            return ("ลูกจ้างชั่วคราว / อัตราจ้าง", 4, "#fb923c");
+        if (position.Contains("พนักงาน"))
+            return ("พนักงาน", 3, "#22d3ee");
+        return code switch
         {
-            case "Director":
-                return position.Contains("รอง")
-                    ? ("รองผู้อำนวยการ", 1, "#a78bfa")
-                    : ("ผู้อำนวยการ", 0, "#6366f1");
-            case "Teacher": return ("ครู", 2, "#34d399");
-            case "GovEmployee": return ("พนักงานราชการ", 3, "#22d3ee");
-            case "PermanentStaff": return ("ลูกจ้างประจำ", 4, "#fbbf24");
-            case "TempStaff": return ("ลูกจ้างชั่วคราว", 5, "#fb923c");
-            case "Staff":
-                if (position.Contains("ธุรการ")) return ("ธุรการ", 6, "#f472b6");
-                if (position.Contains("ภารโรง") || position.Contains("นักการ")) return ("นักการภารโรง", 7, "#fb7185");
-                if (position.Contains("พี่เลี้ยง")) return ("พี่เลี้ยง", 8, "#fda4af");
-                return ("บุคลากรสนับสนุน", 9, "#94a3b8");
-            default: return (code, 99, "#94a3b8");
-        }
+            "GovEmployee" => ("พนักงานราชการ", 3, "#22d3ee"),
+            "PermanentStaff" => ("ลูกจ้างประจำ", 8, "#fbbf24"),
+            "TempStaff" => ("ลูกจ้างชั่วคราว / อัตราจ้าง", 4, "#fb923c"),
+            "Director" => ("ผู้อำนวยการ", 0, "#6366f1"),
+            "Teacher" => ("ครู", 2, "#34d399"),
+            _ => ("บุคลากรอื่นๆ", 9, "#94a3b8"),
+        };
     }
 
     private static string SlugifyPersonnelType(string name) => name switch
@@ -377,12 +434,15 @@ public class GuestDashboardController : ControllerBase
         "ผู้อำนวยการ" => "director",
         "รองผู้อำนวยการ" => "deputy-director",
         "ครู" => "teacher",
+        "พนักงาน" => "officer",
         "พนักงานราชการ" => "gov-employee",
         "ลูกจ้างประจำ" => "permanent-staff",
         "ลูกจ้างชั่วคราว" => "temp-staff",
+        "ลูกจ้างชั่วคราว / อัตราจ้าง" => "contract-staff",
         "ธุรการ" => "clerical",
         "นักการภารโรง" => "janitor",
         "พี่เลี้ยง" => "nanny",
+        "บุคลากรอื่นๆ" => "other",
         _ => name.ToLowerInvariant(),
     };
 
@@ -434,7 +494,9 @@ public record DashboardDistributionsDto(
     IReadOnlyList<DashboardSliceDto> StudentLevels,
     IReadOnlyList<DashboardGradeBarDto> StudentGrades,
     IReadOnlyList<DashboardSliceDto> PersonnelTypes,
-    IReadOnlyList<DashboardSliceDto> Districts);
+    IReadOnlyList<DashboardSliceDto> Districts,
+    IReadOnlyList<DashboardSliceDto> AcademicRanks,
+    string? AcademicRankNote);
 
 public record DashboardTrendPointDto(
     int AcademicYear,
