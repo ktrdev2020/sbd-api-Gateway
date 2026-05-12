@@ -78,6 +78,8 @@ builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 
 // Phase B.4: capability grant lookup with Redis cache (cap_v keyed)
 builder.Services.AddScoped<Gateway.Services.ICapabilityService, Gateway.Services.CapabilityService>();
+// Plan #47 — OrgStructure DOCX report generator (stateless)
+builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureDocxGenerator>();
 
 // MinIO (for DMC CSV uploads)
 var minioEndpoint = builder.Configuration["MinIO:Endpoint"] ?? "localhost:9000";
