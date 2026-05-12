@@ -2,6 +2,15 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 WORKDIR /app
 EXPOSE 8080
 
+# Plan #47 — fonts-thai-tlwg + fontconfig so SkiaSharp can render Thai glyphs
+# in the org-structure DOCX image (otherwise text is blank squares).
+# --no-install-recommends keeps image growth small (~10MB for the fonts alone).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fonts-thai-tlwg \
+        fontconfig \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
