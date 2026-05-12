@@ -1255,15 +1255,13 @@ using (var scope = app.Services.CreateScope())
         ('AreaAdmin','dashboard','ภาพรวมเขต','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
         ('AreaAdmin','schools','โรงเรียน','fas fa-school','{{basePath}}/schools',2,TRUE,FALSE,NULL),
         ('AreaAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),
-        ('AreaAdmin','teachers','ครู','fas fa-chalkboard-teacher','{{basePath}}/teachers',4,TRUE,FALSE,NULL),
-        ('AreaAdmin','personnel','บุคลากร','fas fa-users','{{basePath}}/personnel',5,TRUE,FALSE,NULL),
-        ('AreaAdmin','psnl','บริหารงานบุคคล','fas fa-id-card-alt','{{basePath}}/psnl',6,TRUE,FALSE,NULL),
-        ('AreaAdmin','users','จัดการผู้ใช้','fas fa-users-cog','{{basePath}}/users',7,TRUE,FALSE,NULL),
-        ('AreaAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',8,TRUE,FALSE,NULL),
-        ('AreaAdmin','policies','สิทธิ์การใช้งาน','fas fa-sliders','{{basePath}}/policies',9,TRUE,FALSE,NULL),
-        ('AreaAdmin','academics','วิชาการ','fas fa-graduation-cap','{{basePath}}/academics',10,TRUE,FALSE,NULL),
-        ('AreaAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',11,TRUE,FALSE,NULL),
-        ('AreaAdmin','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',12,TRUE,FALSE,NULL),
+        ('AreaAdmin','personnel','บุคลากร','fas fa-users','{{basePath}}/personnel',4,TRUE,FALSE,NULL),
+        ('AreaAdmin','users','จัดการผู้ใช้','fas fa-users-cog','{{basePath}}/users',5,TRUE,FALSE,NULL),
+        ('AreaAdmin','delegation','มอบหมายงาน','fas fa-id-badge','{{basePath}}/personnel/delegation',6,TRUE,FALSE,NULL),
+        ('AreaAdmin','policies','สิทธิ์การใช้งาน','fas fa-sliders','{{basePath}}/policies',7,TRUE,FALSE,NULL),
+        ('AreaAdmin','academics','วิชาการ','fas fa-graduation-cap','{{basePath}}/academics',8,TRUE,FALSE,NULL),
+        ('AreaAdmin','modules','โมดูล','fas fa-puzzle-piece','{{basePath}}/modules',9,TRUE,FALSE,NULL),
+        ('AreaAdmin','profile','โปรไฟล์','fas fa-id-card','{{basePath}}/profile',10,TRUE,FALSE,NULL),
         ('SchoolAdmin','dashboard','ภาพรวมโรงเรียน','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
         ('SchoolAdmin','profile','ข้อมูลโรงเรียน','fas fa-id-card','{{basePath}}/profile',2,TRUE,FALSE,NULL),
         ('SchoolAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),
@@ -1311,6 +1309,17 @@ using (var scope = app.Services.CreateScope())
         WHERE ""Role""='SchoolAdmin' AND ""ItemKey""='psnl';
     ");
     Console.WriteLine("[Seed] Plan #28 — SchoolAdmin/psnl menu row removed (replaced by homeroom).");
+
+    // ── 2026-05-12 — Remove duplicate AreaAdmin personnel menus ──
+    // The area sidebar carried three overlapping items (ครู / บุคลากร /
+    // บริหารงานบุคคล) all pointing at the same area-personnel surface.
+    // Collapsed to a single "บุคลากร" entry; drop the legacy rows so
+    // existing AreaAdmin sessions stop seeing duplicates after redeploy.
+    await db.Database.ExecuteSqlRawAsync(@"
+        DELETE FROM ""MenuItems""
+        WHERE ""Role""='AreaAdmin' AND ""ItemKey"" IN ('teachers','psnl');
+    ");
+    Console.WriteLine("[Seed] AreaAdmin/teachers + AreaAdmin/psnl menu rows removed (collapsed into personnel).");
 
     // Invalidate Redis menu caches so the updated seed is served immediately on first request
     try
