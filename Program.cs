@@ -1659,6 +1659,56 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Migration] SubjectAreaId + SpecialtyId backfilled from text columns.");
 
+    // ── Plan #46 — School Org Structure: SchoolOrgTask table ─────────────────
+    // 1:N — WorkGroup (ScopeType=School) ↔ SchoolOrgTask. Tasks are the numbered
+    // line-items shown under each of the 4 school divisions (วิชาการ/งบประมาณ/
+    // บุคคล/ทั่วไป) in the school admin-structure chart.
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS school_org_tasks (
+            id           BIGSERIAL PRIMARY KEY,
+            work_group_id INTEGER NOT NULL REFERENCES ""WorkGroups""(""Id"") ON DELETE CASCADE,
+            name_th      VARCHAR(500) NOT NULL,
+            description  TEXT,
+            sort_order   INTEGER NOT NULL DEFAULT 0,
+            is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS ix_school_org_tasks_workgroup_sort
+            ON school_org_tasks (work_group_id, sort_order);
+    ");
+    Console.WriteLine("[Migration] Plan #46 — school_org_tasks ensured.");
+
+    // ── Plan #46 — Seed 4 standard school divisions per School (idempotent) ─
+    // Names per the official obec administrative-structure template:
+    //   1. บริหารงานวิชาการ  2. บริหารงานงบประมาณ
+    //   3. บริหารงานบุคคล    4. บริหารทั่วไป
+    // Existing schools may already have custom WorkGroups for ScopeType=""School"";
+    // we only insert these 4 if missing-by-Name. No-op if all 4 already exist.
+    await db.Database.ExecuteSqlRawAsync(@"
+        WITH std(name, sort) AS (
+            VALUES
+                ('บริหารงานวิชาการ',   1),
+                ('บริหารงานงบประมาณ',   2),
+                ('บริหารงานบุคคล',     3),
+                ('บริหารทั่วไป',       4)
+        )
+        -- WorkGroup.ScopeId is int — cast SchoolCode (10-digit numeric varchar) to int.
+        -- Only schools with strictly-numeric SchoolCode get seeded (defensive guard).
+        INSERT INTO ""WorkGroups"" (""Name"", ""ScopeType"", ""ScopeId"", ""SortOrder"", ""IsActive"", ""CreatedAt"")
+        SELECT std.name, 'School', s.""SchoolCode""::int, std.sort, TRUE, NOW()
+        FROM ""Schools"" s
+        CROSS JOIN std
+        WHERE s.""SchoolCode"" ~ '^[0-9]+$'
+          AND NOT EXISTS (
+            SELECT 1 FROM ""WorkGroups"" wg
+            WHERE wg.""ScopeType"" = 'School'
+              AND wg.""ScopeId""   = s.""SchoolCode""::int
+              AND wg.""Name""      = std.name
+        );
+    ");
+    Console.WriteLine("[Migration] Plan #46 — Standard 4-division WorkGroups seeded per school (idempotent).");
+
     // Invalidate refdata Redis cache keys so stale empty-array responses from
     // before this seed run are not served (safe to call every startup — TTL resets).
     try

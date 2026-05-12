@@ -34,6 +34,8 @@ public class GatewayDbContext : SbdDbContext
     public DbSet<SchoolBoardMember> SchoolBoardMembers => Set<SchoolBoardMember>();
     // ── Plan #27 Phase A.0 — Teacher homeroom advisor assignments ──
     public DbSet<TeacherHomeroomAssignment> TeacherHomeroomAssignments => Set<TeacherHomeroomAssignment>();
+    // ── Plan #46 — งานภายใต้แต่ละฝ่ายงาน (School Org Structure) ──
+    public DbSet<SchoolOrgTask> SchoolOrgTasks => Set<SchoolOrgTask>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -256,6 +258,26 @@ public class GatewayDbContext : SbdDbContext
             entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear })
                 .HasDatabaseName("IX_teacher_homeroom_school_year")
                 .HasFilter("\"DeletedAt\" IS NULL");
+        });
+
+        // ── Plan #46 — SchoolOrgTask (งานในฝ่ายงานของโรงเรียน) ──
+        modelBuilder.Entity<SchoolOrgTask>(entity =>
+        {
+            entity.ToTable("school_org_tasks");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.WorkGroupId).HasColumnName("work_group_id");
+            entity.Property(e => e.NameTh).HasColumnName("name_th").HasMaxLength(500).IsRequired();
+            entity.Property(e => e.Description).HasColumnName("description");
+            entity.Property(e => e.SortOrder).HasColumnName("sort_order");
+            entity.Property(e => e.IsActive).HasColumnName("is_active").HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.HasIndex(e => new { e.WorkGroupId, e.SortOrder });
+            entity.HasOne<WorkGroup>()
+                .WithMany()
+                .HasForeignKey(e => e.WorkGroupId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
