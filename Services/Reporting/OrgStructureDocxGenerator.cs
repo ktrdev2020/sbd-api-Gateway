@@ -6,25 +6,36 @@ using Gateway.Controllers;
 namespace Gateway.Services.Reporting;
 
 /// <summary>
-/// Plan #47 — emits a single-page A4-landscape DOCX representation of the
-/// school's administrative structure. Uses paragraph + table layout (not an
-/// image render) so the file is editable in Word.
+/// Plan #47 — emits a Word doc that mirrors the official obec org-chart
+/// reference image (แผนภูมิที่ 10): title banner → director + board row →
+/// deputies row → 4 division columns, each column showing the ฝ่าย header,
+/// the head name, then ONE BOX PER TASK stacked vertically (numbered).
 ///
-/// Layout:
-///   • Title (school name + fiscal year)
-///   • Director paragraph
-///   • Board members compact paragraph (sideways info)
-///   • Deputies row (if any)
-///   • 4-column table: division name + head + numbered tasks
-///   • Footer
+/// Implementation note: this is not SmartArt (the diagram-parts API in
+/// OpenXML is prohibitively complex). The reference image's "boxes" are
+/// just colored Word table cells with borders — that's exactly what we
+/// emit here. Visual fidelity is high; the file is editable in Word.
 /// </summary>
 public sealed class OrgStructureDocxGenerator
 {
-    // Pastel fills matching the web chart (sky / violet / emerald / amber).
-    private static readonly string[] DivisionFills = { "BAE6FD", "DDD6FE", "A7F3D0", "FED7AA" };
-    private static readonly string[] DivisionTitleColors = { "0369A1", "6D28D9", "047857", "B45309" };
-    private const string DirectorFill = "FBCFE8"; // pink-200
-    private const string BoardFill = "C7D2FE";    // indigo-200
+    // ── Division palette: header dark + body cream/peach (matches reference) ─
+    private static readonly DivisionStyle[] DivisionStyles = new[]
+    {
+        new DivisionStyle("BAE6FD", "0369A1", "FEF3C7"), // sky header · light cream tasks
+        new DivisionStyle("DDD6FE", "6D28D9", "FCE7F3"), // violet header · pink tasks
+        new DivisionStyle("A7F3D0", "047857", "FED7AA"), // emerald header · peach tasks
+        new DivisionStyle("FED7AA", "B45309", "FEE2E2"), // amber header · light red tasks
+    };
+    private const string DirectorFill = "FBCFE8";
+    private const string DirectorTitleColor = "BE185D";
+    private const string BoardFill = "C7D2FE";
+    private const string BoardTitleColor = "4338CA";
+    private const string DeputyFill = "EDE9FE";
+    private const string DeputyTitleColor = "6D28D9";
+    private const string TitleBannerFill = "FEF9C3";   // yellow
+    private const string TitleBannerBorder = "CA8A04"; // amber-600
+
+    private sealed record DivisionStyle(string HeaderFill, string HeaderColor, string TaskFill);
 
     public MemoryStream Generate(OrgStructureDto data)
     {
@@ -35,38 +46,26 @@ public sealed class OrgStructureDocxGenerator
             main.Document = new Document(new Body());
             var body = main.Document.Body!;
 
-            // ── Section: A4 landscape, narrow margins ───────────────────────
             body.AppendChild(BuildSectionProperties());
 
-            // ── Title ──────────────────────────────────────────────────────
-            body.AppendChild(TitleParagraph("แผนภูมิโครงสร้างการบริหารงานโรงเรียน", 28, true));
-            body.AppendChild(TitleParagraph($"โรงเรียน{data.SchoolName}", 24, true));
-            body.AppendChild(TitleParagraph($"ปีการศึกษา {data.FiscalYear}", 14, false));
+            // Title banner
+            body.AppendChild(BuildTitleBanner(
+                $"แผนภูมิโครงสร้างการบริหารงาน · โรงเรียน{data.SchoolName}"));
             body.AppendChild(Spacer(120));
 
-            // ── Director + Board (one row, side by side) ───────────────────
-            body.AppendChild(BuildLeadershipTable(data));
-            body.AppendChild(Spacer(120));
+            // Top row: director + board
+            body.AppendChild(BuildTopRow(data));
+            body.AppendChild(Spacer(80));
 
-            // ── Deputies (if any) ──────────────────────────────────────────
+            // Deputies (if any)
             if (data.Deputies().Count > 0)
             {
-                body.AppendChild(TitleParagraph("รองผู้อำนวยการ", 12, true));
-                foreach (var d in data.Deputies())
-                {
-                    body.AppendChild(TitleParagraph("• " + d.FullName, 12, false));
-                }
-                body.AppendChild(Spacer(120));
+                body.AppendChild(BuildDeputiesRow(data));
+                body.AppendChild(Spacer(80));
             }
 
-            // ── 4-division table ───────────────────────────────────────────
-            body.AppendChild(BuildDivisionsTable(data));
-
-            // ── Footer ─────────────────────────────────────────────────────
-            body.AppendChild(Spacer(160));
-            body.AppendChild(TitleParagraph(
-                "สำนักงานเขตพื้นที่การศึกษาประถมศึกษาศรีสะเกษ เขต 3 · SBD Platform",
-                9, false, "94A3B8"));
+            // 4 division columns with full task list
+            body.AppendChild(BuildDivisionsRow(data));
 
             main.Document.Save();
         }
@@ -74,202 +73,293 @@ public sealed class OrgStructureDocxGenerator
         return ms;
     }
 
-    // ─── Layout helpers ──────────────────────────────────────────────────────
+    // ─── Section ────────────────────────────────────────────────────────────
 
     private static SectionProperties BuildSectionProperties() => new(
         new PageSize { Width = 16838u, Height = 11906u, Orient = PageOrientationValues.Landscape },
-        // Narrow margins (~10mm = 567 twentieths-of-a-point)
         new PageMargin { Top = 567, Right = 567, Bottom = 567, Left = 567, Header = 0, Footer = 0 }
     );
 
-    private static Paragraph TitleParagraph(string text, int halfPt, bool bold, string colorHex = "1E293B")
+    // ─── Title banner (yellow box across the page) ──────────────────────────
+
+    private static Table BuildTitleBanner(string text)
+    {
+        var t = new Table();
+        t.AppendChild(SimpleTableProps(widthPct: "5000"));
+        t.AppendChild(StandardBorders(TitleBannerBorder, BorderSize: 8));
+        var row = new TableRow();
+        var cell = new TableCell();
+        cell.AppendChild(new TableCellProperties(
+            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = TitleBannerFill },
+            CenterVertical(),
+            CellMargin(80, 200, 80, 200)));
+        cell.AppendChild(StyledParagraph(text, 16, bold: true, "1E293B", JustificationValues.Center));
+        row.AppendChild(cell);
+        t.AppendChild(row);
+        return t;
+    }
+
+    // ─── Top row: Director (centered) + Board (right) ───────────────────────
+
+    private static Table BuildTopRow(OrgStructureDto data)
+    {
+        var director = data.Leadership.FirstOrDefault(l => l.IsDirector);
+        var boardCount = data.Board.Count;
+
+        var t = new Table();
+        t.AppendChild(SimpleTableProps(widthPct: "3500"));
+        t.AppendChild(NoBorders());
+
+        var grid = new TableGrid();
+        grid.AppendChild(new GridColumn { Width = "5000" });
+        grid.AppendChild(new GridColumn { Width = "3500" });
+        t.AppendChild(grid);
+
+        var row = new TableRow();
+
+        // Director cell
+        var dirCell = new TableCell();
+        dirCell.AppendChild(new TableCellProperties(
+            new TableCellWidth { Width = "5000", Type = TableWidthUnitValues.Dxa },
+            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = DirectorFill },
+            new TableCellBorders(
+                new TopBorder { Val = BorderValues.Single, Size = 8, Color = "F9A8D4" },
+                new BottomBorder { Val = BorderValues.Single, Size = 8, Color = "F9A8D4" },
+                new LeftBorder { Val = BorderValues.Single, Size = 8, Color = "F9A8D4" },
+                new RightBorder { Val = BorderValues.Single, Size = 8, Color = "F9A8D4" }),
+            CellMargin(120, 200, 120, 200)));
+        dirCell.AppendChild(StyledParagraph("ผู้อำนวยการ", 11, bold: false, DirectorTitleColor, JustificationValues.Center));
+        dirCell.AppendChild(StyledParagraph(director?.FullName ?? "— ยังไม่ระบุ —", 14, bold: true, "1E293B", JustificationValues.Center));
+        row.AppendChild(dirCell);
+
+        // Board cell (smaller, right)
+        var boardCell = new TableCell();
+        boardCell.AppendChild(new TableCellProperties(
+            new TableCellWidth { Width = "3500", Type = TableWidthUnitValues.Dxa },
+            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = BoardFill },
+            new TableCellBorders(
+                new TopBorder { Val = BorderValues.Single, Size = 8, Color = "A5B4FC" },
+                new BottomBorder { Val = BorderValues.Single, Size = 8, Color = "A5B4FC" },
+                new LeftBorder { Val = BorderValues.Dashed, Size = 8, Color = "A5B4FC" },
+                new RightBorder { Val = BorderValues.Single, Size = 8, Color = "A5B4FC" }),
+            CellMargin(100, 120, 100, 120)));
+        boardCell.AppendChild(StyledParagraph("คณะกรรมการสถานศึกษา", 10, bold: true, BoardTitleColor, JustificationValues.Center));
+        boardCell.AppendChild(StyledParagraph(
+            boardCount > 0 ? $"{boardCount} คน" : "ยังไม่ระบุ",
+            11, bold: false, "1E293B", JustificationValues.Center));
+        row.AppendChild(boardCell);
+
+        t.AppendChild(row);
+        return t;
+    }
+
+    // ─── Deputies row ───────────────────────────────────────────────────────
+
+    private static Table BuildDeputiesRow(OrgStructureDto data)
+    {
+        var deputies = data.Deputies();
+        var t = new Table();
+        t.AppendChild(SimpleTableProps(widthPct: "3500"));
+        t.AppendChild(NoBorders());
+
+        var row = new TableRow();
+        foreach (var d in deputies)
+        {
+            var cell = new TableCell();
+            cell.AppendChild(new TableCellProperties(
+                new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = DeputyFill },
+                new TableCellBorders(
+                    new TopBorder { Val = BorderValues.Single, Size = 6, Color = "C4B5FD" },
+                    new BottomBorder { Val = BorderValues.Single, Size = 6, Color = "C4B5FD" },
+                    new LeftBorder { Val = BorderValues.Single, Size = 6, Color = "C4B5FD" },
+                    new RightBorder { Val = BorderValues.Single, Size = 6, Color = "C4B5FD" }),
+                CellMargin(80, 160, 80, 160)));
+            cell.AppendChild(StyledParagraph("รองผู้อำนวยการ", 9, bold: false, DeputyTitleColor, JustificationValues.Center));
+            cell.AppendChild(StyledParagraph(d.FullName, 11, bold: true, "1E293B", JustificationValues.Center));
+            row.AppendChild(cell);
+        }
+        t.AppendChild(row);
+        return t;
+    }
+
+    // ─── 4-division row with task boxes ─────────────────────────────────────
+
+    private static Table BuildDivisionsRow(OrgStructureDto data)
+    {
+        var t = new Table();
+        t.AppendChild(SimpleTableProps(widthPct: "5000"));
+        // Outer table: invisible borders, each cell is a column
+        t.AppendChild(new TableProperties(
+            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
+            new TableLayout { Type = TableLayoutValues.Fixed },
+            new TableBorders(
+                new TopBorder { Val = BorderValues.None },
+                new BottomBorder { Val = BorderValues.None },
+                new LeftBorder { Val = BorderValues.None },
+                new RightBorder { Val = BorderValues.None },
+                new InsideHorizontalBorder { Val = BorderValues.None },
+                new InsideVerticalBorder { Val = BorderValues.None })));
+
+        var grid = new TableGrid();
+        for (var i = 0; i < 4; i++) grid.AppendChild(new GridColumn { Width = "3750" });
+        t.AppendChild(grid);
+
+        var row = new TableRow();
+        for (var i = 0; i < data.WorkGroups.Count && i < 4; i++)
+        {
+            var wg = data.WorkGroups[i];
+            var style = DivisionStyles[i];
+            var cell = new TableCell();
+            cell.AppendChild(new TableCellProperties(
+                new TableCellWidth { Width = "3750", Type = TableWidthUnitValues.Dxa },
+                CellMargin(60, 80, 60, 80)));
+            // Nested table inside each division cell: header + head + N task rows
+            cell.AppendChild(BuildDivisionInnerTable(wg, style));
+            row.AppendChild(cell);
+        }
+        t.AppendChild(row);
+        return t;
+    }
+
+    private static Table BuildDivisionInnerTable(OrgWorkGroupDto wg, DivisionStyle style)
+    {
+        var t = new Table();
+        t.AppendChild(new TableProperties(
+            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
+            new TableJustification { Val = TableRowAlignmentValues.Center },
+            new TableLayout { Type = TableLayoutValues.Fixed },
+            new TableCellMarginDefault(
+                new TopMargin { Width = "60", Type = TableWidthUnitValues.Dxa },
+                new BottomMargin { Width = "60", Type = TableWidthUnitValues.Dxa },
+                new LeftMargin { Width = "80", Type = TableWidthUnitValues.Dxa },
+                new RightMargin { Width = "80", Type = TableWidthUnitValues.Dxa }),
+            new TableBorders(
+                new TopBorder { Val = BorderValues.Single, Size = 6, Color = style.HeaderColor },
+                new BottomBorder { Val = BorderValues.Single, Size = 6, Color = style.HeaderColor },
+                new LeftBorder { Val = BorderValues.Single, Size = 6, Color = style.HeaderColor },
+                new RightBorder { Val = BorderValues.Single, Size = 6, Color = style.HeaderColor },
+                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4, Color = style.HeaderColor },
+                new InsideVerticalBorder { Val = BorderValues.None })));
+
+        // Header row (division name)
+        var hRow = new TableRow();
+        var hCell = new TableCell();
+        hCell.AppendChild(new TableCellProperties(
+            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = style.HeaderFill },
+            CellMargin(80, 100, 80, 100)));
+        hCell.AppendChild(StyledParagraph(wg.Name, 11, bold: true, style.HeaderColor, JustificationValues.Center));
+        hRow.AppendChild(hCell);
+        t.AppendChild(hRow);
+
+        // Head row
+        var head = wg.Members.FirstOrDefault(m => m.Role == "หัวหน้าฝ่าย") ?? wg.Members.FirstOrDefault();
+        var headRow = new TableRow();
+        var headCell = new TableCell();
+        headCell.AppendChild(new TableCellProperties(
+            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "FFFFFF" },
+            CellMargin(60, 100, 60, 100)));
+        if (head != null)
+        {
+            headCell.AppendChild(StyledParagraph("หัวหน้าฝ่าย", 8, bold: false, "94A3B8", JustificationValues.Center));
+            headCell.AppendChild(StyledParagraph(head.FullName, 10, bold: false, "1E293B", JustificationValues.Center));
+        }
+        else
+        {
+            headCell.AppendChild(StyledParagraph("— ยังไม่ระบุหัวหน้าฝ่าย —", 9, bold: false, "94A3B8", JustificationValues.Center));
+        }
+        headRow.AppendChild(headCell);
+        t.AppendChild(headRow);
+
+        // Task rows — one cell per task (like the reference image's stacked boxes)
+        if (wg.Tasks.Count == 0)
+        {
+            var emptyRow = new TableRow();
+            var emptyCell = new TableCell();
+            emptyCell.AppendChild(new TableCellProperties(
+                new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "F8FAFC" },
+                CellMargin(80, 100, 80, 100)));
+            emptyCell.AppendChild(StyledParagraph("ยังไม่มีรายการงาน", 9, bold: false, "CBD5E1", JustificationValues.Center));
+            emptyRow.AppendChild(emptyCell);
+            t.AppendChild(emptyRow);
+        }
+        else
+        {
+            for (var i = 0; i < wg.Tasks.Count; i++)
+            {
+                var task = wg.Tasks[i];
+                var tRow = new TableRow();
+                var tCell = new TableCell();
+                tCell.AppendChild(new TableCellProperties(
+                    new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = style.TaskFill },
+                    CellMargin(60, 100, 60, 100)));
+                tCell.AppendChild(StyledParagraph(
+                    $"{i + 1}. {task.NameTh}",
+                    9, bold: false, "1E293B", JustificationValues.Left));
+                tRow.AppendChild(tCell);
+                t.AppendChild(tRow);
+            }
+        }
+
+        return t;
+    }
+
+    // ─── Low-level helpers ──────────────────────────────────────────────────
+
+    private static Paragraph StyledParagraph(string text, int halfPt, bool bold, string colorHex, JustificationValues align)
     {
         var run = new Run();
-        var runProps = new RunProperties(
+        var props = new RunProperties(
             new RunFonts { Ascii = "Tahoma", HighAnsi = "Tahoma", ComplexScript = "Tahoma" },
             new FontSize { Val = (halfPt * 2).ToString() },
             new FontSizeComplexScript { Val = (halfPt * 2).ToString() },
             new Color { Val = colorHex });
         if (bold)
         {
-            runProps.AppendChild(new Bold());
-            runProps.AppendChild(new BoldComplexScript());
+            props.AppendChild(new Bold());
+            props.AppendChild(new BoldComplexScript());
         }
-        run.AppendChild(runProps);
-        run.AppendChild(new Text(text));
+        run.AppendChild(props);
+        run.AppendChild(new Text(text) { Space = SpaceProcessingModeValues.Preserve });
 
         var p = new Paragraph(new ParagraphProperties(
-            new Justification { Val = JustificationValues.Center },
-            new SpacingBetweenLines { After = "60", Before = "0" }));
+            new Justification { Val = align },
+            new SpacingBetweenLines { After = "20", Before = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto }));
         p.AppendChild(run);
         return p;
     }
 
-    private static Paragraph Spacer(int twentiethsOfPt)
-    {
-        return new Paragraph(new ParagraphProperties(
+    private static Paragraph Spacer(int twentiethsOfPt) =>
+        new(new ParagraphProperties(
             new SpacingBetweenLines { After = twentiethsOfPt.ToString(), Before = "0" }));
-    }
 
-    private static Table BuildLeadershipTable(OrgStructureDto data)
-    {
-        var director = data.Leadership.FirstOrDefault(l => l.IsDirector);
-        var boardCount = data.Board.Count;
-
-        var table = new Table();
-        table.AppendChild(new TableProperties(
-            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
+    private static TableProperties SimpleTableProps(string widthPct) =>
+        new(
+            new TableWidth { Width = widthPct, Type = TableWidthUnitValues.Pct },
             new TableJustification { Val = TableRowAlignmentValues.Center },
-            new TableBorders(
-                new TopBorder { Val = BorderValues.None, Size = 0 },
-                new BottomBorder { Val = BorderValues.None, Size = 0 },
-                new LeftBorder { Val = BorderValues.None, Size = 0 },
-                new RightBorder { Val = BorderValues.None, Size = 0 },
-                new InsideHorizontalBorder { Val = BorderValues.None, Size = 0 },
-                new InsideVerticalBorder { Val = BorderValues.None, Size = 0 }
-            )));
+            new TableLayout { Type = TableLayoutValues.Fixed });
 
-        var row = new TableRow();
-        // Director cell (60% width)
-        row.AppendChild(BuildBoxCell(
-            director?.FullName ?? "— ยังไม่ระบุ —",
-            director != null ? "ผู้อำนวยการ" : null,
-            DirectorFill, "BE185D", 6000));
-        // Board cell (40%)
-        row.AppendChild(BuildBoxCell(
-            boardCount > 0 ? $"{boardCount} คน" : "— ยังไม่ระบุ —",
-            "คณะกรรมการสถานศึกษา",
-            BoardFill, "4338CA", 3000));
-        table.AppendChild(row);
-        return table;
-    }
+    private static TableBorders NoBorders() => new(
+        new TopBorder { Val = BorderValues.None },
+        new BottomBorder { Val = BorderValues.None },
+        new LeftBorder { Val = BorderValues.None },
+        new RightBorder { Val = BorderValues.None },
+        new InsideHorizontalBorder { Val = BorderValues.None },
+        new InsideVerticalBorder { Val = BorderValues.None });
 
-    private static TableCell BuildBoxCell(string main, string? subLabel, string fillHex, string subColorHex, int widthDxa)
-    {
-        var cell = new TableCell();
-        cell.AppendChild(new TableCellProperties(
-            new TableCellWidth { Width = widthDxa.ToString(), Type = TableWidthUnitValues.Dxa },
-            new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = fillHex },
-            new TableCellMargin(
-                new TopMargin { Width = "100", Type = TableWidthUnitValues.Dxa },
-                new BottomMargin { Width = "100", Type = TableWidthUnitValues.Dxa },
-                new LeftMargin { Width = "120", Type = TableWidthUnitValues.Dxa },
-                new RightMargin { Width = "120", Type = TableWidthUnitValues.Dxa })));
-        if (!string.IsNullOrEmpty(subLabel))
-        {
-            cell.AppendChild(TitleParagraph(subLabel, 8, false, subColorHex));
-        }
-        cell.AppendChild(TitleParagraph(main, 13, true));
-        return cell;
-    }
+    private static TableBorders StandardBorders(string colorHex, uint BorderSize) => new(
+        new TopBorder { Val = BorderValues.Single, Size = BorderSize, Color = colorHex },
+        new BottomBorder { Val = BorderValues.Single, Size = BorderSize, Color = colorHex },
+        new LeftBorder { Val = BorderValues.Single, Size = BorderSize, Color = colorHex },
+        new RightBorder { Val = BorderValues.Single, Size = BorderSize, Color = colorHex });
 
-    private static Table BuildDivisionsTable(OrgStructureDto data)
-    {
-        var table = new Table();
-        table.AppendChild(new TableProperties(
-            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
-            new TableJustification { Val = TableRowAlignmentValues.Center },
-            new TableLayout { Type = TableLayoutValues.Fixed },
-            new TableBorders(
-                new TopBorder { Val = BorderValues.Single, Size = 4, Color = "E2E8F0" },
-                new BottomBorder { Val = BorderValues.Single, Size = 4, Color = "E2E8F0" },
-                new LeftBorder { Val = BorderValues.Single, Size = 4, Color = "E2E8F0" },
-                new RightBorder { Val = BorderValues.Single, Size = 4, Color = "E2E8F0" },
-                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4, Color = "F1F5F9" },
-                new InsideVerticalBorder { Val = BorderValues.Single, Size = 4, Color = "E2E8F0" }
-            )));
+    private static TableCellVerticalAlignment CenterVertical() =>
+        new() { Val = TableVerticalAlignmentValues.Center };
 
-        // Column widths grid (4 equal)
-        var grid = new TableGrid();
-        for (var i = 0; i < 4; i++) grid.AppendChild(new GridColumn { Width = "3750" });
-        table.AppendChild(grid);
-
-        // Row 1: division name headers (colored)
-        var headerRow = new TableRow();
-        for (var i = 0; i < data.WorkGroups.Count && i < 4; i++)
-        {
-            var wg = data.WorkGroups[i];
-            var cell = new TableCell();
-            cell.AppendChild(new TableCellProperties(
-                new Shading { Val = ShadingPatternValues.Clear, Color = "auto", Fill = DivisionFills[i] },
-                new TableCellMargin(
-                    new TopMargin { Width = "80", Type = TableWidthUnitValues.Dxa },
-                    new BottomMargin { Width = "80", Type = TableWidthUnitValues.Dxa })));
-            cell.AppendChild(TitleParagraph(wg.Name, 11, true, DivisionTitleColors[i]));
-            headerRow.AppendChild(cell);
-        }
-        table.AppendChild(headerRow);
-
-        // Row 2: head names
-        var headRow = new TableRow();
-        for (var i = 0; i < data.WorkGroups.Count && i < 4; i++)
-        {
-            var wg = data.WorkGroups[i];
-            var head = wg.Members.FirstOrDefault(m => m.Role == "หัวหน้าฝ่าย") ?? wg.Members.FirstOrDefault();
-            var cell = new TableCell();
-            cell.AppendChild(new TableCellProperties(
-                new TableCellMargin(
-                    new TopMargin { Width = "60", Type = TableWidthUnitValues.Dxa },
-                    new BottomMargin { Width = "60", Type = TableWidthUnitValues.Dxa })));
-            cell.AppendChild(TitleParagraph("หัวหน้าฝ่าย", 8, false, "94A3B8"));
-            cell.AppendChild(TitleParagraph(head?.FullName ?? "— ยังไม่ระบุ —", 10, false, "1E293B"));
-            headRow.AppendChild(cell);
-        }
-        table.AppendChild(headRow);
-
-        // Row 3: task lists (one cell per division with numbered list)
-        var tasksRow = new TableRow();
-        for (var i = 0; i < data.WorkGroups.Count && i < 4; i++)
-        {
-            var wg = data.WorkGroups[i];
-            var cell = new TableCell();
-            cell.AppendChild(new TableCellProperties(
-                new TableCellMargin(
-                    new TopMargin { Width = "80", Type = TableWidthUnitValues.Dxa },
-                    new BottomMargin { Width = "80", Type = TableWidthUnitValues.Dxa },
-                    new LeftMargin { Width = "120", Type = TableWidthUnitValues.Dxa },
-                    new RightMargin { Width = "120", Type = TableWidthUnitValues.Dxa })));
-            if (wg.Tasks.Count == 0)
-            {
-                cell.AppendChild(TaskParagraph("— ไม่มีรายการงาน —", 0, "CBD5E1", italic: true));
-            }
-            else
-            {
-                for (var t = 0; t < wg.Tasks.Count; t++)
-                {
-                    cell.AppendChild(TaskParagraph(wg.Tasks[t].NameTh, t + 1, "334155"));
-                }
-            }
-            tasksRow.AppendChild(cell);
-        }
-        table.AppendChild(tasksRow);
-
-        return table;
-    }
-
-    private static Paragraph TaskParagraph(string text, int number, string colorHex, bool italic = false)
-    {
-        var prefix = number > 0 ? $"{number}. " : string.Empty;
-        var run = new Run();
-        var runProps = new RunProperties(
-            new RunFonts { Ascii = "Tahoma", HighAnsi = "Tahoma", ComplexScript = "Tahoma" },
-            new FontSize { Val = "16" },        // 8pt
-            new FontSizeComplexScript { Val = "16" },
-            new Color { Val = colorHex });
-        if (italic)
-        {
-            runProps.AppendChild(new Italic());
-            runProps.AppendChild(new ItalicComplexScript());
-        }
-        run.AppendChild(runProps);
-        run.AppendChild(new Text(prefix + text) { Space = SpaceProcessingModeValues.Preserve });
-
-        var p = new Paragraph(new ParagraphProperties(
-            new Justification { Val = JustificationValues.Left },
-            new SpacingBetweenLines { After = "30", Before = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto }));
-        p.AppendChild(run);
-        return p;
-    }
+    private static TableCellMargin CellMargin(int top, int right, int bottom, int left) => new(
+        new TopMargin { Width = top.ToString(), Type = TableWidthUnitValues.Dxa },
+        new RightMargin { Width = right.ToString(), Type = TableWidthUnitValues.Dxa },
+        new BottomMargin { Width = bottom.ToString(), Type = TableWidthUnitValues.Dxa },
+        new LeftMargin { Width = left.ToString(), Type = TableWidthUnitValues.Dxa });
 }
 
 internal static class OrgStructureDtoExt
