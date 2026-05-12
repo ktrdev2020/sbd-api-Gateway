@@ -290,6 +290,115 @@ public class GuestDashboardController : ControllerBase
             ComingSoonNote: "ข้อมูลย้อนหลัง 5 ปี กำลังนำเข้าจาก DMC archive — เร็วๆ นี้"));
     }
 
+    // ── 4. District comparison (radar chart) ──────────────────────────────
+
+    /// <summary>Plan #47 — per-district counts across 5 metrics for the radar
+    /// chart on the public home page. All metrics derive from Gateway DB
+    /// (no cross-pod fan-out) so the endpoint stays sub-100ms.
+    /// Each district publishes raw counts plus normalized 0..1 values relative
+    /// to the cross-district max for the same axis (so radar polygons compare
+    /// fairly without imposing a domain expert's weighting).</summary>
+    [HttpGet("district-comparison")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<DashboardDistrictComparisonDto>> GetDistrictComparison(CancellationToken ct)
+    {
+        var schoolsQ = _db.Schools
+            .Where(s => s.AreaId == AreaId && s.IsActive && s.DeletedAt == null);
+
+        var schoolsByDistrict = await schoolsQ
+            .Where(s => s.Address != null && s.Address.SubDistrict != null)
+            .GroupBy(s => s.Address!.SubDistrict!.District.NameTh)
+            .Select(g => new { Name = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        // Personnel rows joined to school → district, classified.
+        var personnelRaw = await (
+            from psa in _db.Set<SBD.Domain.Entities.PersonnelSchoolAssignment>().AsNoTracking()
+            join p in _db.Personnel.AsNoTracking() on psa.PersonnelId equals p.Id
+            join pt in _db.Set<SBD.Domain.Entities.PersonnelType>().AsNoTracking() on p.PersonnelTypeId equals pt.Id
+            join s in schoolsQ on psa.SchoolCode equals s.SchoolCode
+            where (psa.EndDate == null || psa.EndDate >= DateOnly.FromDateTime(DateTime.Today))
+              && s.Address != null && s.Address.SubDistrict != null
+            select new
+            {
+                District = s.Address!.SubDistrict!.District.NameTh,
+                Code = pt.Code,
+                Position = psa.Position ?? string.Empty,
+            }
+        ).ToListAsync(ct);
+
+        var personnelByDistrict = personnelRaw
+            .GroupBy(r => r.District)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var classified = g
+                        .Select(r => ClassifyPersonnel(r.Code, r.Position).Name)
+                        .ToList();
+                    return new
+                    {
+                        Total = classified.Count,
+                        Director = classified.Count(n => n.Contains("ผอ.") || n.Contains("ผู้บริหาร") || n == "ผู้อำนวยการ"),
+                        Teacher = classified.Count(n => n == "ครู" || n.Contains("ครู") && !n.Contains("พี่เลี้ยง")),
+                        Support = classified.Count(n => n == "ภารโรง" || n == "ธุรการ" || n.Contains("สนับสนุน") || n.Contains("พี่เลี้ยง") || n.Contains("อัตราจ้าง")),
+                    };
+                });
+
+        var axes = new List<DashboardAxisDto>
+        {
+            new("schools",   "โรงเรียน"),
+            new("personnel", "บุคลากรรวม"),
+            new("directors", "ผอ./รอง"),
+            new("teachers",  "ครู"),
+            new("support",   "สนับสนุน"),
+        };
+
+        var palette = new[] { "#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#f472b6", "#22d3ee" };
+
+        var districtRows = schoolsByDistrict
+            .OrderByDescending(d => d.Count)
+            .Select((d, i) =>
+            {
+                personnelByDistrict.TryGetValue(d.Name, out var pp);
+                var raw = new[]
+                {
+                    (double)d.Count,
+                    (double)(pp?.Total ?? 0),
+                    (double)(pp?.Director ?? 0),
+                    (double)(pp?.Teacher ?? 0),
+                    (double)(pp?.Support ?? 0),
+                };
+                return new
+                {
+                    Id = SlugFromDistrict(d.Name),
+                    Label = d.Name,
+                    Color = palette[i % palette.Length],
+                    Raw = raw,
+                };
+            })
+            .ToList();
+
+        // Normalize 0..1 per axis using cross-district max.
+        var axisCount = axes.Count;
+        var maxes = new double[axisCount];
+        for (int a = 0; a < axisCount; a++)
+        {
+            maxes[a] = districtRows.Count == 0 ? 1 : Math.Max(1, districtRows.Max(d => d.Raw[a]));
+        }
+
+        var seriesOut = districtRows
+            .Select(d => new DashboardDistrictSeriesDto(
+                Id: d.Id,
+                Label: d.Label,
+                Color: d.Color,
+                Raw: d.Raw,
+                Values: Enumerable.Range(0, axisCount).Select(a => d.Raw[a] / maxes[a]).ToArray()))
+            .ToList();
+
+        return Ok(new DashboardDistrictComparisonDto(Axes: axes, Series: seriesOut));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private async Task<int> FetchStudentCountAsync(CancellationToken ct)
@@ -515,3 +624,18 @@ internal sealed record StudentBundle(
     List<DashboardSliceDto> Sizes,
     List<DashboardSliceDto> Levels,
     List<DashboardGradeBarDto> Grades);
+
+public record DashboardAxisDto(
+    string Id,
+    string Label);
+
+public record DashboardDistrictSeriesDto(
+    string Id,
+    string Label,
+    string Color,
+    double[] Raw,
+    double[] Values);
+
+public record DashboardDistrictComparisonDto(
+    IReadOnlyList<DashboardAxisDto> Axes,
+    IReadOnlyList<DashboardDistrictSeriesDto> Series);
