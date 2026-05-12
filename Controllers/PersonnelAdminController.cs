@@ -1066,6 +1066,91 @@ public class PersonnelAdminController(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // POST /api/v1/admin/personnel/{id}/transfer-school
+    // Atomic school transfer — close the current primary assignment and open
+    // a new one at the destination. AreaAdmin can transfer only between
+    // schools inside their scope; SuperAdmin can transfer anywhere.
+    // Body: { schoolCode (required), effectiveDate?, position?, academicRank?, … }
+    // ─────────────────────────────────────────────────────────────────────────
+    [HttpPost("{id:int}/transfer-school")]
+    public async Task<IActionResult> TransferSchool(
+        int id,
+        [FromBody] TransferSchoolRequest req,
+        CancellationToken ct = default)
+    {
+        var (scope, deny) = await GuardMutationAsync(id, ct);
+        if (deny is not null) return deny;
+
+        if (string.IsNullOrWhiteSpace(req.SchoolCode))
+            return BadRequest(new { error = "ต้องระบุโรงเรียนปลายทาง" });
+
+        if (scope!.Role != "super_admin" && !scope.AllowedSchoolCodes.Contains(req.SchoolCode))
+            return Forbid();
+
+        var p = await db.Personnel
+            .Include(x => x.SchoolAssignments)
+            .FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (p is null) return NotFound();
+        if (p.AffiliationStatus == "trashed")
+            return BadRequest(new { error = "ไม่สามารถย้ายบุคลากรที่อยู่ในถังขยะ" });
+
+        var currentPrimary = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
+        if (currentPrimary is null)
+            return BadRequest(new { error = "บุคลากรไม่มีโรงเรียนต้นทาง — ใช้ assign-to-school แทน" });
+
+        if (string.Equals(currentPrimary.SchoolCode, req.SchoolCode, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "โรงเรียนปลายทางต้องไม่ใช่โรงเรียนเดิม" });
+
+        var today     = DateOnly.FromDateTime(DateTime.Today);
+        var effective = req.EffectiveDate ?? today;
+        if (effective < today)
+            return BadRequest(new { error = "วันที่มีผลย้อนหลังไม่ได้" });
+
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        int.TryParse(userIdStr, out var requestedBy);
+
+        var previousSchoolCode = currentPrimary.SchoolCode;
+
+        // Close the current primary one day before the effective date so the
+        // assignment timeline has no overlap. If effective = today, the old
+        // row ends yesterday (which may be earlier than its StartDate for
+        // brand-new hires — still acceptable, the row represents intent).
+        currentPrimary.EndDate   = effective.AddDays(-1);
+        currentPrimary.IsPrimary = false;
+
+        db.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
+        {
+            PersonnelId            = id,
+            SchoolCode             = req.SchoolCode,
+            IsPrimary              = true,
+            Position               = req.Position       ?? currentPrimary.Position,
+            AcademicRank           = req.AcademicRank   ?? currentPrimary.AcademicRank,
+            SalaryLevelId          = req.SalaryLevelId  ?? currentPrimary.SalaryLevelId,
+            SalaryLevel            = req.SalaryLevel    ?? currentPrimary.SalaryLevel,
+            PositionTypeId         = currentPrimary.PositionTypeId,
+            AcademicStandingTypeId = currentPrimary.AcademicStandingTypeId,
+            SpecialRoleType        = "none",
+            StartDate              = effective,
+        });
+
+        p.UpdatedAt = DateTimeOffset.UtcNow;
+        p.UpdatedBy = requestedBy;
+
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveAsync(DetailKey(id));
+        await TryInvalidateListAndStats(scope.CacheTag);
+
+        return Ok(new
+        {
+            id,
+            previousSchoolCode,
+            newSchoolCode = req.SchoolCode,
+            effectiveDate = effective.ToString("yyyy-MM-dd"),
+            status        = "transferred",
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DELETE /api/v1/admin/personnel/{id}
     // Soft-delete → trash
     // ─────────────────────────────────────────────────────────────────────────
@@ -1614,6 +1699,20 @@ public record AssignToSchoolRequest(
     int?      SalaryLevelId,
     string?   SalaryLevel,
     string?   SpecialRoleType);
+
+/// <summary>
+/// Atomic school transfer body. EffectiveDate defaults to today when omitted;
+/// must not be in the past. Position/AcademicRank/Salary fall through to the
+/// current primary's values when not overridden, so the simplest body the UI
+/// needs to send is <c>{ schoolCode }</c>.
+/// </summary>
+public record TransferSchoolRequest(
+    string    SchoolCode,
+    DateOnly? EffectiveDate,
+    string?   Position,
+    string?   AcademicRank,
+    int?      SalaryLevelId,
+    string?   SalaryLevel);
 
 public record CycleActionRequest(string SchoolCode, int AcademicYearId);
 public record ReopenRequest(string? Note);
