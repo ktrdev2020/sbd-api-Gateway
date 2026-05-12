@@ -30,6 +30,9 @@ public class OrgStructureController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<OrgStructureDto>> Get(string schoolCode, [FromQuery] int? year)
     {
+        if (!OrgScopeAuth.CanAccessSchool(User, schoolCode))
+            return Forbid();
+
         var fiscalYear = year ?? CurrentFiscalYear();
 
         var school = await _db.Schools.AsNoTracking()

@@ -21,12 +21,27 @@ public class OrgTasksController : ControllerBase
     private readonly GatewayDbContext _db;
     public OrgTasksController(SbdDbContext db) { _db = (GatewayDbContext)db; }
 
+    /// <summary>Validate WG exists + is School scope + caller can access that school.</summary>
+    /// <returns>null on success; an ActionResult (NotFound/BadRequest/Forbid) on failure.</returns>
+    private async Task<ActionResult?> EnsureCanAccessAsync(int wgId)
+    {
+        var wg = await _db.WorkGroups.AsNoTracking()
+            .Where(w => w.Id == wgId)
+            .Select(w => new { w.Id, w.ScopeType, w.ScopeId })
+            .FirstOrDefaultAsync();
+        if (wg == null) return NotFound(new { message = "WorkGroup not found" });
+        if (wg.ScopeType != "School") return BadRequest(new { message = "OrgTask only supports ScopeType=School" });
+        // WorkGroup.ScopeId = SchoolCode::int — reconstruct the 10-digit string
+        var schoolCode = wg.ScopeId.ToString("D10");
+        if (!OrgScopeAuth.CanAccessSchool(User, schoolCode)) return Forbid();
+        return null;
+    }
+
     [HttpGet]
     public async Task<ActionResult<List<OrgTaskDto>>> List(int wgId)
     {
-        var wg = await _db.WorkGroups.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.Id == wgId);
-        if (wg == null) return NotFound(new { message = "WorkGroup not found" });
+        var guard = await EnsureCanAccessAsync(wgId);
+        if (guard != null) return guard;
 
         var rows = await _db.SchoolOrgTasks.AsNoTracking()
             .Where(t => t.WorkGroupId == wgId)
@@ -50,10 +65,8 @@ public class OrgTasksController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.NameTh))
             return BadRequest(new { message = "NameTh is required" });
 
-        var wg = await _db.WorkGroups.FirstOrDefaultAsync(w => w.Id == wgId);
-        if (wg == null) return NotFound(new { message = "WorkGroup not found" });
-        if (wg.ScopeType != "School")
-            return BadRequest(new { message = "OrgTask is only supported for ScopeType=School" });
+        var guard = await EnsureCanAccessAsync(wgId);
+        if (guard != null) return guard;
 
         var nextSort = request.SortOrder ?? ((await _db.SchoolOrgTasks
             .Where(t => t.WorkGroupId == wgId)
@@ -85,6 +98,9 @@ public class OrgTasksController : ControllerBase
     [HttpPut("{taskId:long}")]
     public async Task<ActionResult<OrgTaskDto>> Update(int wgId, long taskId, [FromBody] OrgTaskUpsertRequest request)
     {
+        var guard = await EnsureCanAccessAsync(wgId);
+        if (guard != null) return guard;
+
         var task = await _db.SchoolOrgTasks
             .FirstOrDefaultAsync(t => t.Id == taskId && t.WorkGroupId == wgId);
         if (task == null) return NotFound();
@@ -110,6 +126,9 @@ public class OrgTasksController : ControllerBase
     [HttpDelete("{taskId:long}")]
     public async Task<ActionResult> Delete(int wgId, long taskId)
     {
+        var guard = await EnsureCanAccessAsync(wgId);
+        if (guard != null) return guard;
+
         var task = await _db.SchoolOrgTasks
             .FirstOrDefaultAsync(t => t.Id == taskId && t.WorkGroupId == wgId);
         if (task == null) return NotFound();
@@ -122,6 +141,9 @@ public class OrgTasksController : ControllerBase
     [HttpPut("reorder")]
     public async Task<ActionResult> Reorder(int wgId, [FromBody] List<OrgTaskReorderRow> rows)
     {
+        var guard = await EnsureCanAccessAsync(wgId);
+        if (guard != null) return guard;
+
         var ids = rows.Select(r => r.Id).ToList();
         var tasks = await _db.SchoolOrgTasks
             .Where(t => t.WorkGroupId == wgId && ids.Contains(t.Id))
