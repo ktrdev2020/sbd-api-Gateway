@@ -246,7 +246,11 @@ public class PersonnelAdminController(
                 p.LastName,
                 PositionType  = p.PositionType != null ? p.PositionType.NameTh : null,
                 // Compound text: resolve from FK nav first, fall back to text, then Personnel standing
+                // Always pick the most-recently-started primary so callers
+                // see the CURRENT school even when legacy data left multiple
+                // IsPrimary=true rows around.
                 AcademicRank  = p.SchoolAssignments.Where(sa => sa.IsPrimary)
+                    .OrderByDescending(sa => sa.StartDate)
                     .Select(sa => sa.AcademicStandingTypeId != null
                         ? (sa.PositionTypeNav != null ? sa.PositionTypeNav.NameTh : "")
                             + sa.AcademicStandingTypeNav!.NameTh
@@ -258,10 +262,12 @@ public class PersonnelAdminController(
                                      : p.AcademicStandingType.NameTh)
                                  : null),
                 SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary)
+                    .OrderByDescending(sa => sa.StartDate)
                     .Select(sa => sa.SalaryLevelId != null ? sa.SalaryLevelNav!.NameTh : sa.SalaryLevel)
                     .FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
+                    .OrderByDescending(sa => sa.StartDate)
                     .Select(sa => new { sa.SchoolCode, NameTh = sa.School.NameTh, sa.SpecialRoleType })
                     .FirstOrDefault(),
                 p.UserId,
@@ -485,7 +491,12 @@ public class PersonnelAdminController(
             if (!schoolIds.Any(s => scope.AllowedSchoolCodes.Contains(s))) return Forbid();
         }
 
-        var primarySa = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
+        // Pick the most-recently-started primary so the detail view also
+        // reflects the CURRENT school under legacy multi-primary data.
+        var primarySa = p.SchoolAssignments
+            .Where(sa => sa.IsPrimary)
+            .OrderByDescending(sa => sa.StartDate)
+            .FirstOrDefault();
 
         var result = new
         {
@@ -1039,6 +1050,19 @@ public class PersonnelAdminController(
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int.TryParse(userIdStr, out var requestedBy);
 
+        // Defensively close ALL existing primary assignments — historically
+        // assign-to-school appended a new IsPrimary=true row without revoking
+        // existing ones, which produced records with multiple "current"
+        // schools that confused list queries. Closing every prior primary
+        // here also self-heals such legacy rows on the next operation.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        foreach (var prior in p.SchoolAssignments.Where(sa => sa.IsPrimary))
+        {
+            prior.IsPrimary = false;
+            if (prior.EndDate is null || prior.EndDate > today.AddDays(-1))
+                prior.EndDate = today.AddDays(-1);
+        }
+
         db.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
         {
             PersonnelId     = id,
@@ -1049,7 +1073,7 @@ public class PersonnelAdminController(
             SalaryLevelId   = req.SalaryLevelId,
             SalaryLevel     = req.SalaryLevel,
             SpecialRoleType = req.SpecialRoleType ?? "none",
-            StartDate       = DateOnly.FromDateTime(DateTime.Today),
+            StartDate       = today,
         });
 
         p.AffiliationStatus = "affiliated";
@@ -1094,7 +1118,16 @@ public class PersonnelAdminController(
         if (p.AffiliationStatus == "trashed")
             return BadRequest(new { error = "ไม่สามารถย้ายบุคลากรที่อยู่ในถังขยะ" });
 
-        var currentPrimary = p.SchoolAssignments.FirstOrDefault(sa => sa.IsPrimary);
+        // Take the most-recently-started primary as the authoritative source
+        // and treat any older primaries as legacy data corruption to be
+        // closed alongside it. OrderByDescending(StartDate) tolerates rows
+        // with the same flag value created by historical bugs in
+        // assign-to-school (which didn't revoke prior primaries).
+        var primaries = p.SchoolAssignments
+            .Where(sa => sa.IsPrimary)
+            .OrderByDescending(sa => sa.StartDate)
+            .ToList();
+        var currentPrimary = primaries.FirstOrDefault();
         if (currentPrimary is null)
             return BadRequest(new { error = "บุคลากรไม่มีโรงเรียนต้นทาง — ใช้ assign-to-school แทน" });
 
@@ -1111,12 +1144,16 @@ public class PersonnelAdminController(
 
         var previousSchoolCode = currentPrimary.SchoolCode;
 
-        // Close the current primary one day before the effective date so the
-        // assignment timeline has no overlap. If effective = today, the old
-        // row ends yesterday (which may be earlier than its StartDate for
-        // brand-new hires — still acceptable, the row represents intent).
-        currentPrimary.EndDate   = effective.AddDays(-1);
-        currentPrimary.IsPrimary = false;
+        // Close ALL existing primaries (defensive against legacy multi-primary
+        // rows) one day before the effective date so the timeline has no
+        // overlap. The new row inserted below becomes the sole primary.
+        foreach (var prior in primaries)
+        {
+            prior.IsPrimary = false;
+            var cutoff = effective.AddDays(-1);
+            if (prior.EndDate is null || prior.EndDate > cutoff)
+                prior.EndDate = cutoff;
+        }
 
         db.PersonnelSchoolAssignments.Add(new PersonnelSchoolAssignment
         {
