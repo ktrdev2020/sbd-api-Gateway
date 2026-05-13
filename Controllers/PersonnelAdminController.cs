@@ -557,7 +557,12 @@ public class PersonnelAdminController(
                     : sa.AcademicRank,
                 sa.SalaryLevelId,
                 SalaryLevel = sa.SalaryLevelNav?.NameTh ?? sa.SalaryLevel,
-                sa.IsPrimary,
+                // Mask legacy multi-primary rows: only the latest (highest Id)
+                // primary keeps the flag in the response. The DB row may
+                // still be IsPrimary=true until the next assign/transfer
+                // self-heals it, but the UI sees a single authoritative
+                // primary.
+                IsPrimary = sa.IsPrimary && primarySa != null && sa.Id == primarySa.Id,
                 AssignedAt  = sa.StartDate,
                 sa.EndDate,
                 sa.SpecialRoleType,
