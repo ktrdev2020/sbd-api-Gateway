@@ -250,7 +250,7 @@ public class PersonnelAdminController(
                 // see the CURRENT school even when legacy data left multiple
                 // IsPrimary=true rows around.
                 AcademicRank  = p.SchoolAssignments.Where(sa => sa.IsPrimary)
-                    .OrderByDescending(sa => sa.StartDate)
+                    .OrderByDescending(sa => sa.Id)
                     .Select(sa => sa.AcademicStandingTypeId != null
                         ? (sa.PositionTypeNav != null ? sa.PositionTypeNav.NameTh : "")
                             + sa.AcademicStandingTypeNav!.NameTh
@@ -262,12 +262,12 @@ public class PersonnelAdminController(
                                      : p.AcademicStandingType.NameTh)
                                  : null),
                 SalaryLevel   = p.SchoolAssignments.Where(sa => sa.IsPrimary)
-                    .OrderByDescending(sa => sa.StartDate)
+                    .OrderByDescending(sa => sa.Id)
                     .Select(sa => sa.SalaryLevelId != null ? sa.SalaryLevelNav!.NameTh : sa.SalaryLevel)
                     .FirstOrDefault(),
                 PrimarySchool = p.SchoolAssignments
                     .Where(sa => sa.IsPrimary)
-                    .OrderByDescending(sa => sa.StartDate)
+                    .OrderByDescending(sa => sa.Id)
                     .Select(sa => new { sa.SchoolCode, NameTh = sa.School.NameTh, sa.SpecialRoleType })
                     .FirstOrDefault(),
                 p.UserId,
@@ -495,7 +495,7 @@ public class PersonnelAdminController(
         // reflects the CURRENT school under legacy multi-primary data.
         var primarySa = p.SchoolAssignments
             .Where(sa => sa.IsPrimary)
-            .OrderByDescending(sa => sa.StartDate)
+            .OrderByDescending(sa => sa.Id)
             .FirstOrDefault();
 
         var result = new
@@ -1125,7 +1125,7 @@ public class PersonnelAdminController(
         // assign-to-school (which didn't revoke prior primaries).
         var primaries = p.SchoolAssignments
             .Where(sa => sa.IsPrimary)
-            .OrderByDescending(sa => sa.StartDate)
+            .OrderByDescending(sa => sa.Id)
             .ToList();
         var currentPrimary = primaries.FirstOrDefault();
         if (currentPrimary is null)
