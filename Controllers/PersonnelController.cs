@@ -39,26 +39,38 @@ public class AreaPersonnelController : ControllerBase
                 .ThenInclude(a => a.School)
             .AsQueryable();
 
-        // Filter by area
+        // Today (DateOnly) — used everywhere we need to exclude expired
+        // (closed) primary school assignments. A transferred-out teacher
+        // keeps the old primary row but with EndDate set; without this
+        // guard the picker still lists them under the OLD school. See
+        // GetSummary below for the same pattern.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        // Filter by area — only personnel whose CURRENT primary assignment
+        // is in this area.
         query = query.Where(p =>
-            p.SchoolAssignments.Any(a => a.School.AreaId == areaId && a.IsPrimary));
+            p.SchoolAssignments.Any(a => a.School.AreaId == areaId && a.IsPrimary
+                && (a.EndDate == null || a.EndDate >= today)));
 
         // Scope: school = has school assignment, area = area officers (no school)
         if (scope == "school")
         {
             query = query.Where(p =>
-                p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolCode != null && a.SchoolCode != ""));
+                p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolCode != null && a.SchoolCode != ""
+                    && (a.EndDate == null || a.EndDate >= today)));
         }
         else if (scope == "area")
         {
             query = query.Where(p => p.PersonnelTypeNav.Code == "Staff");
         }
 
-        // Filter by specific school
+        // Filter by specific school — exclude transferred-out teachers
+        // (closed primary assignments).
         if (!string.IsNullOrWhiteSpace(schoolCode))
         {
             query = query.Where(p =>
-                p.SchoolAssignments.Any(a => a.SchoolCode == schoolCode && a.IsPrimary));
+                p.SchoolAssignments.Any(a => a.SchoolCode == schoolCode && a.IsPrimary
+                    && (a.EndDate == null || a.EndDate >= today)));
         }
 
         // Filter by personnel type (by code)
