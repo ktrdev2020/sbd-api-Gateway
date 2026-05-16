@@ -59,9 +59,16 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// Add Redis
+// Add Redis (Plan #54 — resilient connect; survive Redis outage without 500s)
 var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? throw new InvalidOperationException("Redis connection string not configured");
-builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnection));
+var redisOptions = ConfigurationOptions.Parse(redisConnection);
+redisOptions.AbortOnConnectFail = false;
+redisOptions.ConnectRetry = 3;
+redisOptions.ConnectTimeout = 5000;
+redisOptions.SyncTimeout = 5000;
+redisOptions.KeepAlive = 30;
+redisOptions.ReconnectRetryPolicy = new ExponentialRetry(5000);
+builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisOptions));
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
 
 // Add DbContext - GatewayDbContext extends SbdDbContext with local entities + shadow properties

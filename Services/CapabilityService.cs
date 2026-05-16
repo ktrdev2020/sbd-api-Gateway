@@ -23,10 +23,21 @@ public class CapabilityService(
         long capVersion,
         CancellationToken ct = default)
     {
-        // 1. Try Redis cache first
+        // 1. Try Redis cache first. Plan #54 — wire failure is treated as cache
+        //    miss (caller falls through to DB) instead of bubbling up as 500.
         var redisDb = redis.GetDatabase();
         var cacheKey = CacheKey(userId, capVersion);
-        var cached = await redisDb.StringGetAsync(cacheKey);
+        RedisValue cached;
+        try
+        {
+            cached = await redisDb.StringGetAsync(cacheKey);
+        }
+        catch (Exception ex) when (ex is RedisException or TimeoutException)
+        {
+            logger.LogWarning(ex, "Redis read failed for cap grants (user {UserId} cap_v={V}); falling back to DB", userId, capVersion);
+            cached = RedisValue.Null;
+        }
+
         if (cached.HasValue)
         {
             try
@@ -38,7 +49,8 @@ public class CapabilityService(
             catch (JsonException ex)
             {
                 logger.LogWarning(ex, "Corrupt grant cache for user {UserId} cap_v={V}, rebuilding", userId, capVersion);
-                await redisDb.KeyDeleteAsync(cacheKey);
+                try { await redisDb.KeyDeleteAsync(cacheKey); }
+                catch (Exception inner) when (inner is RedisException or TimeoutException) { /* swallow */ }
             }
         }
 
