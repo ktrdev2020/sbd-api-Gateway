@@ -121,6 +121,8 @@ public class CacheController : ControllerBase
     {
         if (db < 0 || db > 2) return BadRequest(new { message = "DbIndex must be 0–2" });
         if (string.IsNullOrWhiteSpace(prefix)) return BadRequest(new { message = "กรุณาระบุ prefix" });
+        if (!_redis.IsConnected)
+            return StatusCode(503, new { message = "Redis ขัดข้อง — ไม่สามารถดึง key list ได้" });
 
         var redisDb = _redis.GetDatabase(db);
         var definitions = await _db.CacheDefinitions
@@ -162,6 +164,8 @@ public class CacheController : ControllerBase
     public async Task<IActionResult> DeleteKey(int db, [FromQuery] string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return BadRequest(new { message = "กรุณาระบุ key" });
+        if (!_redis.IsConnected)
+            return StatusCode(503, new { message = "Redis ขัดข้อง — ไม่สามารถลบ key ได้" });
         var redisDb = _redis.GetDatabase(db);
         var deleted = await redisDb.KeyDeleteAsync(key);
         _logger.LogWarning("[Cache] Key deleted: DB{Db} '{Key}' by {User}", db, key, User.Identity?.Name);
@@ -173,6 +177,8 @@ public class CacheController : ControllerBase
     public async Task<IActionResult> DeleteGroup(int db, [FromQuery] string prefix)
     {
         if (string.IsNullOrWhiteSpace(prefix)) return BadRequest(new { message = "กรุณาระบุ prefix" });
+        if (!_redis.IsConnected)
+            return StatusCode(503, new { message = "Redis ขัดข้อง — ไม่สามารถลบ group ได้" });
         var redisDb = _redis.GetDatabase(db);
         var pattern = prefix == "*" ? "*" : $"{prefix}*";
         var keys = _server.Keys(database: db, pattern: pattern).ToArray();

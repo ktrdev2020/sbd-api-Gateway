@@ -215,27 +215,39 @@ public class ApiStatusController : ControllerBase
     {
         var infra = new InfrastructureStatus();
 
-        // Check Redis
-        try
-        {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var db = _redis.GetDatabase();
-            await db.PingAsync();
-            sw.Stop();
-            infra.Redis = new InfraComponentStatus
-            {
-                Status = "healthy",
-                ResponseTimeMs = sw.ElapsedMilliseconds,
-                Message = "Connected"
-            };
-        }
-        catch (Exception ex)
+        // Check Redis — Plan #55 follow-up: IsConnected gate avoids the
+        // SyncTimeout wait when the multiplexer is obviously disconnected.
+        if (!_redis.IsConnected)
         {
             infra.Redis = new InfraComponentStatus
             {
                 Status = "unhealthy",
-                Message = $"Connection failed: {ex.Message}"
+                Message = "Disconnected (multiplexer offline)"
             };
+        }
+        else
+        {
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var db = _redis.GetDatabase();
+                await db.PingAsync();
+                sw.Stop();
+                infra.Redis = new InfraComponentStatus
+                {
+                    Status = "healthy",
+                    ResponseTimeMs = sw.ElapsedMilliseconds,
+                    Message = "Connected"
+                };
+            }
+            catch (Exception ex)
+            {
+                infra.Redis = new InfraComponentStatus
+                {
+                    Status = "unhealthy",
+                    Message = $"Connection failed: {ex.Message}"
+                };
+            }
         }
 
         // Check RabbitMQ
