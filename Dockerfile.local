@@ -25,6 +25,8 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked \
 COPY apps/dotnet/Gateway/ apps/dotnet/Gateway/
 COPY libs/dotnet/ libs/dotnet/
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=build-gateway-obj,target=/src/apps/dotnet/Gateway/obj,sharing=locked \
+    --mount=type=cache,id=build-gateway-bin,target=/src/apps/dotnet/Gateway/bin,sharing=locked \
     dotnet publish apps/dotnet/Gateway/Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
 FROM base AS final

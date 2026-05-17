@@ -56,6 +56,8 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
 # Copy all source and publish
 COPY . .
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked \
+    --mount=type=cache,id=build-gateway-obj,target=/src/obj,sharing=locked \
+    --mount=type=cache,id=build-gateway-bin,target=/src/bin,sharing=locked \
     dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:USE_NUGET=true
 
 FROM base AS final
