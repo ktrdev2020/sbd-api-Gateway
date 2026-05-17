@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 WORKDIR /app
 EXPOSE 8080
@@ -54,7 +55,8 @@ RUN --mount=type=secret,id=GITHUB_TOKEN \
 
 # Copy all source and publish
 COPY . .
-RUN dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:USE_NUGET=true --no-restore
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages,sharing=locked \
+    dotnet publish Gateway.csproj -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false /p:USE_NUGET=true
 
 FROM base AS final
 WORKDIR /app
