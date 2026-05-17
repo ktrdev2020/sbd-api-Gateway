@@ -25,17 +25,22 @@ public class CapabilityService(
     {
         // 1. Try Redis cache first. Plan #54 — wire failure is treated as cache
         //    miss (caller falls through to DB) instead of bubbling up as 500.
+        //    Plan #55 follow-up — IsConnected gate skips the SyncTimeout wait
+        //    entirely when the multiplexer has no live connection.
         var redisDb = redis.GetDatabase();
         var cacheKey = CacheKey(userId, capVersion);
-        RedisValue cached;
-        try
+        RedisValue cached = RedisValue.Null;
+        if (redis.IsConnected)
         {
-            cached = await redisDb.StringGetAsync(cacheKey);
-        }
-        catch (Exception ex) when (ex is RedisException or TimeoutException)
-        {
-            logger.LogWarning(ex, "Redis read failed for cap grants (user {UserId} cap_v={V}); falling back to DB", userId, capVersion);
-            cached = RedisValue.Null;
+            try
+            {
+                cached = await redisDb.StringGetAsync(cacheKey);
+            }
+            catch (Exception ex) when (ex is RedisException or TimeoutException)
+            {
+                logger.LogWarning(ex, "Redis read failed for cap grants (user {UserId} cap_v={V}); falling back to DB", userId, capVersion);
+                cached = RedisValue.Null;
+            }
         }
 
         if (cached.HasValue)
@@ -87,16 +92,19 @@ public class CapabilityService(
             OrderRef       = g.OrderRef,
         }).ToList();
 
-        // 3. Write to Redis
-        try
+        // 3. Write to Redis (skip when disconnected)
+        if (redis.IsConnected)
         {
-            var json = JsonSerializer.Serialize(dtos, JsonOptions);
-            await redisDb.StringSetAsync(cacheKey, json, CacheTtl);
-        }
-        catch (Exception ex)
-        {
-            // Cache write failure is non-fatal — degrade gracefully
-            logger.LogWarning(ex, "Failed to cache grants for user {UserId}", userId);
+            try
+            {
+                var json = JsonSerializer.Serialize(dtos, JsonOptions);
+                await redisDb.StringSetAsync(cacheKey, json, CacheTtl);
+            }
+            catch (Exception ex)
+            {
+                // Cache write failure is non-fatal — degrade gracefully
+                logger.LogWarning(ex, "Failed to cache grants for user {UserId}", userId);
+            }
         }
 
         return dtos;

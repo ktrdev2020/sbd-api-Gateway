@@ -37,6 +37,7 @@ public class RedisCacheService : ICacheService
 
     public async Task<T?> GetAsync<T>(string key)
     {
+        if (!_redis.IsConnected) return default;
         try
         {
             var value = await _database.StringGetAsync(key);
@@ -62,6 +63,7 @@ public class RedisCacheService : ICacheService
 
     public async Task SetAsync<T>(string key, T value, TimeSpan? expiration = null)
     {
+        if (!_redis.IsConnected) return;
         try
         {
             var serialized = JsonSerializer.Serialize(value, JsonOptions);
@@ -79,6 +81,7 @@ public class RedisCacheService : ICacheService
 
     public async Task RemoveAsync(string key)
     {
+        if (!_redis.IsConnected) return;
         try
         {
             await _database.KeyDeleteAsync(key);
@@ -91,6 +94,7 @@ public class RedisCacheService : ICacheService
 
     public async Task<bool> ExistsAsync(string key)
     {
+        if (!_redis.IsConnected) return false;
         try
         {
             return await _database.KeyExistsAsync(key);
@@ -104,6 +108,7 @@ public class RedisCacheService : ICacheService
 
     public async Task RemoveByPrefixAsync(string prefix)
     {
+        if (!_redis.IsConnected) return;
         try
         {
             foreach (var endpoint in _redis.GetEndPoints())

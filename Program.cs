@@ -64,8 +64,8 @@ var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? thro
 var redisOptions = ConfigurationOptions.Parse(redisConnection);
 redisOptions.AbortOnConnectFail = false;
 redisOptions.ConnectRetry = 3;
-redisOptions.ConnectTimeout = 5000;
-redisOptions.SyncTimeout = 5000;
+redisOptions.ConnectTimeout = 2000;
+redisOptions.SyncTimeout = 1000;             // Plan #55 follow-up: fast-fail; IsConnected gate skips wait entirely
 redisOptions.KeepAlive = 30;
 redisOptions.ReconnectRetryPolicy = new ExponentialRetry(5000);
 builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisOptions));
