@@ -1362,6 +1362,8 @@ using (var scope = app.Services.CreateScope())
             new SBD.Domain.Entities.Module { Code = "attendance",      Name = "ระบบเช็คชื่อ",       Category = "Feature", Icon = "✅", SortOrder = 11, IsDefault = false, IsEnabled = true, RoutePath = "attendance", Description = "บันทึกการเข้าเรียนรายวัน", AssignableToTeacher = true, AssignableToStudent = true },
             new SBD.Domain.Entities.Module { Code = "gradebook",       Name = "สมุดเกรด",           Category = "Feature", Icon = "📝", SortOrder = 12, IsDefault = false, IsEnabled = true, RoutePath = "gradebook",  Description = "บันทึกและคำนวณผลการเรียน", AssignableToTeacher = true, AssignableToStudent = true },
             new SBD.Domain.Entities.Module { Code = "aplan",          Name = "ระบบแผนปฏิบัติการและงบประมาณประจำปี", Category = "Feature", Icon = "📋", SortOrder = 13, IsDefault = false, IsEnabled = true, RoutePath = "aplan", Description = "บริหารแผนปฏิบัติการประจำปีและงบประมาณ", AssignableToTeacher = false, AssignableToStudent = true },
+            // Plan #56 — Payslip module (3-type Excel viewer for ข้าราชการ/พนักงานราชการ/บำนาญ).
+            new SBD.Domain.Entities.Module { Code = "payslip",        Name = "ระบบสลิปเงินเดือน", Category = "Feature", Icon = "💵", SortOrder = 14, IsDefault = false, IsEnabled = true, RoutePath = "payslip", Description = "เปิดดูและพิมพ์สลิปเงินเดือน ค่าตอบแทน และบำนาญ", AssignableToTeacher = true, AssignableToStudent = false },
         };
 
         // Shadow property visibility/registration seed values
@@ -1375,6 +1377,8 @@ using (var scope = app.Services.CreateScope())
             ["attendance"] = "student,teacher,school,area",
             ["gradebook"] = "student,teacher,school,area",
             ["aplan"] = "student,teacher,school,area",
+            // Plan #56 D9 — `public` audience added so guest budget-info viewers can list payslip cards.
+            ["payslip"] = "teacher,school,area,public",
         };
 
         db.Modules.AddRange(modules);
