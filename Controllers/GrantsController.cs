@@ -50,15 +50,26 @@ public class GrantsController(
         return client;
     }
 
-    // ── GET /api/v1/grants?userId={id} ──────────────────────────────────────
+    // ── GET /api/v1/grants ──────────────────────────────────────────────────
+    // Plan #56 T16 — Forward optional filters (userId/capabilityCodePrefix/scopeType/scopeId)
+    // to AuthorityService so the Delegation page can query by capability+area.
     [HttpGet]
     public async Task<IActionResult> GetForUser(
-        [FromQuery] int userId,
+        [FromQuery] int? userId,
+        [FromQuery] string? capabilityCodePrefix,
+        [FromQuery] string? scopeType,
+        [FromQuery] long? scopeId,
         CancellationToken ct = default)
     {
         var baseUrl = await GetAuthorityBaseUrl();
         var client = CreateClient();
-        var response = await client.GetAsync($"{baseUrl}/api/v1/grants?userId={userId}", ct);
+        var qs = new List<string>();
+        if (userId.HasValue) qs.Add($"userId={userId.Value}");
+        if (!string.IsNullOrWhiteSpace(capabilityCodePrefix)) qs.Add($"capabilityCodePrefix={Uri.EscapeDataString(capabilityCodePrefix)}");
+        if (!string.IsNullOrWhiteSpace(scopeType)) qs.Add($"scopeType={Uri.EscapeDataString(scopeType)}");
+        if (scopeId.HasValue) qs.Add($"scopeId={scopeId.Value}");
+        var url = qs.Count == 0 ? $"{baseUrl}/api/v1/grants" : $"{baseUrl}/api/v1/grants?{string.Join("&", qs)}";
+        var response = await client.GetAsync(url, ct);
         return await ForwardResponse(response, ct);
     }
 
