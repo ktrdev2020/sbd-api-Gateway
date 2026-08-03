@@ -135,13 +135,23 @@ public class PersonnelAdminController(
         return null;
     }
 
+    /// <summary>
+    /// A school assignment only counts as current while it is open: `IsPrimary`
+    /// alone is not enough, because a transfer leaves the previous row in place
+    /// with an EndDate. Without the date check the person keeps appearing in —
+    /// and stays mutable by — the school they left.
+    /// </summary>
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
     private static IQueryable<Personnel> ApplyScopeFilter(IQueryable<Personnel> q, CallerScope scope)
     {
         if (scope.Role == "super_admin") return q;
         if (scope.AllowedSchoolCodes.Count == 0) return q.Where(_ => false);
+        var today = Today;
         return q.Where(p =>
             p.SchoolAssignments.Any(sa =>
-                sa.IsPrimary && scope.AllowedSchoolCodes.Contains(sa.SchoolCode)));
+                sa.IsPrimary && scope.AllowedSchoolCodes.Contains(sa.SchoolCode)
+                && (sa.EndDate == null || sa.EndDate >= today)));
     }
 
     // ─── Cache helpers ────────────────────────────────────────────────────────
@@ -223,7 +233,12 @@ public class PersonnelAdminController(
             q = q.Where(p => p.SubjectAreaNav != null && p.SubjectAreaNav.NameTh == subjectArea);
 
         if (!string.IsNullOrWhiteSpace(schoolCode))
-            q = q.Where(p => p.SchoolAssignments.Any(sa => sa.SchoolCode == schoolCode && sa.IsPrimary));
+        {
+            var today = Today;
+            q = q.Where(p => p.SchoolAssignments.Any(sa =>
+                sa.SchoolCode == schoolCode && sa.IsPrimary
+                && (sa.EndDate == null || sa.EndDate >= today)));
+        }
 
         var total = await q.CountAsync(ct);
         var items = await q
@@ -312,11 +327,13 @@ public class PersonnelAdminController(
         var q = db.Personnel.AsNoTracking()
             .Where(p => p.AffiliationStatus != "trashed");
         q = ApplyScopeFilter(q, scope);
+        var statsToday = Today;
         if (scopedSchoolCode is not null)
         {
             q = q.Where(p =>
                 p.SchoolAssignments.Any(sa =>
-                    sa.IsPrimary && sa.SchoolCode == scopedSchoolCode));
+                    sa.IsPrimary && sa.SchoolCode == scopedSchoolCode
+                    && (sa.EndDate == null || sa.EndDate >= statsToday)));
         }
 
         // byType as Record<string,number>
@@ -338,7 +355,8 @@ public class PersonnelAdminController(
         {
             bySchool = await db.Personnel.AsNoTracking()
                 .Where(p => p.AffiliationStatus == "affiliated")
-                .SelectMany(p => p.SchoolAssignments.Where(sa => sa.IsPrimary))
+                .SelectMany(p => p.SchoolAssignments.Where(sa =>
+                    sa.IsPrimary && (sa.EndDate == null || sa.EndDate >= statsToday)))
                 .GroupBy(sa => new { sa.SchoolCode, sa.School.NameTh })
                 .Select(g => new
                 {
@@ -920,10 +938,14 @@ public class PersonnelAdminController(
                 .SetProperty(x => x.UpdatedBy,        requestedBy),
                 ct);
         // Update school assignment using ExecuteUpdateAsync (direct SQL — bypasses EF change detection).
-        // Try primary assignment first; fall back to any assignment.
+        // Try the CURRENT primary assignment first (open, most recent), fall
+        // back to any assignment — never write onto a school the person left.
+        var editToday = Today;
         var assignment = await db.PersonnelSchoolAssignments
             .AsNoTracking()
-            .Where(a => a.PersonnelId == id && a.IsPrimary)
+            .Where(a => a.PersonnelId == id && a.IsPrimary
+                && (a.EndDate == null || a.EndDate >= editToday))
+            .OrderByDescending(a => a.Id)
             .Select(a => new { a.Id, a.AcademicRank, a.AcademicStandingTypeId, a.SalaryLevelId, a.SalaryLevel, a.SpecialRoleType, a.Position, a.PositionTypeId })
             .FirstOrDefaultAsync(ct)
             ?? await db.PersonnelSchoolAssignments

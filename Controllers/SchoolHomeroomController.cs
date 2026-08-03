@@ -197,11 +197,15 @@ public class SchoolHomeroomController : ControllerBase
         // (DbContext is NOT thread-safe).
         var classroomsTask = FetchClassroomsAsync(smis, academicYear, ct);
 
+        // Exclude staff whose posting here has ended — a transfer leaves the
+        // old row behind, and they must not remain pickable as homeroom teacher.
+        var pickerToday = DateOnly.FromDateTime(DateTime.Today);
         var teachers = await (
             from p in _db.Personnel.AsNoTracking()
             join psa in _db.PersonnelSchoolAssignments.AsNoTracking()
                 on p.Id equals psa.PersonnelId
             where psa.SchoolCode == schoolCode && psa.IsPrimary && p.TrashedAt == null
+                  && (psa.EndDate == null || psa.EndDate >= pickerToday)
             orderby p.FirstName
             select new TeacherPickDto(p.Id, p.FirstName, p.LastName, p.Photo, psa.Position, p.PersonnelTypeId)
         ).ToListAsync(ct);
@@ -284,8 +288,10 @@ public class SchoolHomeroomController : ControllerBase
             return Ok(new CopyFromPreviousYearResponse(0, 0));
 
         // Personnel still affiliated with this school as primary
+        var copyToday = DateOnly.FromDateTime(DateTime.Today);
         var stillHere = await _db.PersonnelSchoolAssignments.AsNoTracking()
-            .Where(psa => psa.SchoolCode == schoolCode && psa.IsPrimary)
+            .Where(psa => psa.SchoolCode == schoolCode && psa.IsPrimary
+                && (psa.EndDate == null || psa.EndDate >= copyToday))
             .Select(psa => psa.PersonnelId)
             .ToListAsync(ct);
         var stillHereSet = stillHere.ToHashSet();

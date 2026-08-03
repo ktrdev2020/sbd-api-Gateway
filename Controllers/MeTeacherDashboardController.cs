@@ -48,10 +48,12 @@ public class MeTeacherDashboardController : ControllerBase
     /// <summary>Resolve current user → Personnel.Id + primary SchoolCode + SmisCode.</summary>
     private async Task<(int personnelId, string? schoolCode, string? smisCode, int? schoolIdInt)?> ResolvePrimaryAsync(int userId, CancellationToken ct)
     {
+        var today = DateOnly.FromDateTime(DateTime.Today);
         var row = await (
             from p in _db.Personnel.AsNoTracking()
             where p.UserId == userId && p.TrashedAt == null
             join psa in _db.PersonnelSchoolAssignments.AsNoTracking()
+                    .Where(x => x.EndDate == null || x.EndDate >= today)
                 on new { pid = p.Id, primary = true } equals new { pid = psa.PersonnelId, primary = psa.IsPrimary } into psaJ
             from psa in psaJ.DefaultIfEmpty()
             join s in _db.Schools.AsNoTracking() on psa.SchoolCode equals s.SchoolCode into sJ
@@ -78,10 +80,12 @@ public class MeTeacherDashboardController : ControllerBase
         var userId = CurrentUserId;
         if (userId is null) return Unauthorized();
 
+        var today = DateOnly.FromDateTime(DateTime.Today);
         var dto = await (
             from p in _db.Personnel.AsNoTracking()
             where p.UserId == userId && p.TrashedAt == null
             join psa in _db.PersonnelSchoolAssignments.AsNoTracking()
+                    .Where(x => x.EndDate == null || x.EndDate >= today)
                 on new { pid = p.Id, primary = true } equals new { pid = psa.PersonnelId, primary = psa.IsPrimary } into psaJ
             from psa in psaJ.DefaultIfEmpty()
             join s in _db.Schools.AsNoTracking() on psa.SchoolCode equals s.SchoolCode into sJ

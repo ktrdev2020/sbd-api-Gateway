@@ -46,8 +46,10 @@ public class OrgStructureController : ControllerBase
             return BadRequest(new { message = $"SchoolCode {school.SchoolCode} is not numeric" });
 
         // ── Leadership (ผอ / รองผอ) — derived from Position text + SpecialRoleType ──
+        var orgToday = DateOnly.FromDateTime(DateTime.Today);
         var leadership = await _db.PersonnelSchoolAssignments.AsNoTracking()
             .Where(a => a.SchoolCode == schoolCode
+                && (a.EndDate == null || a.EndDate >= orgToday)
                 && (a.Position!.StartsWith("ผู้อำนวยการ")
                     || a.Position.StartsWith("รองผู้อำนวยการ")
                     || a.SpecialRoleType == "acting_director"

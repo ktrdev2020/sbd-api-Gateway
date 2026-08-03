@@ -311,6 +311,14 @@ using (var scope = app.Services.CreateScope())
         CREATE UNIQUE INDEX IF NOT EXISTS ""IX_WorkGroupMembers_WorkGroupId_PersonnelId""
             ON ""WorkGroupMembers"" (""WorkGroupId"", ""PersonnelId"");
 
+        -- One current posting per person. A transfer closes the previous row
+        -- (EndDate + IsPrimary=false); a bulk import that forgot the second
+        -- half left 97 people primary at two schools at once, so they kept
+        -- showing up in — and were editable from — the school they had left.
+        -- Partial index so historical closed rows are unaffected.
+        CREATE UNIQUE INDEX IF NOT EXISTS ""UX_PersonnelSchoolAssignments_OnePrimary""
+            ON ""PersonnelSchoolAssignments"" (""PersonnelId"") WHERE ""IsPrimary"";
+
         -- AcademicStandingTypes table (วิทยฐานะ)
         CREATE TABLE IF NOT EXISTS ""AcademicStandingTypes"" (
             ""Id"" SERIAL PRIMARY KEY,

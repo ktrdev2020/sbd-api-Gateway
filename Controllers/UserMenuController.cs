@@ -127,8 +127,13 @@ public class UserMenuController : ControllerBase
 
         if (user?.Personnel == null) return null;
 
+        // Current posting only, newest first — a stale row from a school the
+        // user left must not decide which console/menu they land on.
+        var today = DateOnly.FromDateTime(DateTime.Today);
         return await _db.Set<PersonnelSchoolAssignment>()
-            .Where(psa => psa.PersonnelId == user.Personnel.Id && psa.IsPrimary)
+            .Where(psa => psa.PersonnelId == user.Personnel.Id && psa.IsPrimary
+                && (psa.EndDate == null || psa.EndDate >= today))
+            .OrderByDescending(psa => psa.Id)
             .Select(psa => psa.SchoolCode)
             .FirstOrDefaultAsync();
     }

@@ -220,8 +220,10 @@ public class SchoolModuleController : ControllerBase
         if (!schoolModule.Module.AssignableToTeacher)
             return BadRequest(new { message = "This module does not support teacher assignment" });
 
+        var assignToday = DateOnly.FromDateTime(DateTime.Today);
         var teacherInSchool = await _context.Set<PersonnelSchoolAssignment>()
-            .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolCode == schoolCode);
+            .AnyAsync(psa => psa.PersonnelId == request.TeacherId && psa.SchoolCode == schoolCode
+                && (psa.EndDate == null || psa.EndDate >= assignToday));
         if (!teacherInSchool)
             return BadRequest(new { message = "Teacher is not assigned to this school" });
 

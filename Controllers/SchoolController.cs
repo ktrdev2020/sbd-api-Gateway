@@ -119,8 +119,10 @@ public class SchoolController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
+        var countToday = DateOnly.FromDateTime(DateTime.Today);
         var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => psa.SchoolCode == schoolCode);
+            .CountAsync(psa => psa.SchoolCode == schoolCode
+                && (psa.EndDate == null || psa.EndDate >= countToday));
 
         return Ok(MapToDto(school, teacherCount));
     }
@@ -437,8 +439,13 @@ public class SchoolController : ControllerBase
     [HttpGet("{schoolCode}/personnel")]
     public async Task<ActionResult<IEnumerable<SchoolPersonnelItemDto>>> GetSchoolPersonnel(string schoolCode)
     {
+        // Only people currently posted here — a transfer leaves the previous
+        // row behind with an EndDate, and without this filter the school keeps
+        // listing (and assigning work to) staff who have already moved on.
+        var today = DateOnly.FromDateTime(DateTime.Today);
         var personnel = await _context.Set<PersonnelSchoolAssignment>()
-            .Where(psa => psa.SchoolCode == schoolCode)
+            .Where(psa => psa.SchoolCode == schoolCode
+                && (psa.EndDate == null || psa.EndDate >= today))
             .OrderBy(psa => psa.Personnel.PersonnelTypeNav.Code)
             .ThenBy(psa => psa.Personnel.FirstName)
             .Select(psa => new SchoolPersonnelItemDto(
@@ -514,8 +521,10 @@ public class SchoolController : ControllerBase
         if (school == null)
             return NotFound(new { message = "School not found" });
 
+        var countToday = DateOnly.FromDateTime(DateTime.Today);
         var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => psa.SchoolCode == schoolCode);
+            .CountAsync(psa => psa.SchoolCode == schoolCode
+                && (psa.EndDate == null || psa.EndDate >= countToday));
 
         return Ok(MapToDto(school, teacherCount));
     }
@@ -529,7 +538,8 @@ public class SchoolController : ControllerBase
         var summary = new SchoolSummaryDto(
             TotalSchools: await activeSchools.CountAsync(),
             TotalTeachers: await _context.Set<PersonnelSchoolAssignment>()
-                .CountAsync(psa => activeSchools.Any(s => s.SchoolCode == psa.SchoolCode)),
+                .CountAsync(psa => activeSchools.Any(s => s.SchoolCode == psa.SchoolCode)
+                    && (psa.EndDate == null || psa.EndDate >= DateOnly.FromDateTime(DateTime.Today))),
             TotalStudents: await activeSchools.SumAsync(s => s.StudentCount ?? 0),
             Districts: await activeSchools
                 .Where(s => s.Address != null && s.Address.SubDistrict != null)
@@ -611,8 +621,10 @@ public class SchoolController : ControllerBase
             .ToListAsync();
 
         var schoolCodes = schools.Select(s => s.SchoolCode).ToList();
+        var summaryToday = DateOnly.FromDateTime(DateTime.Today);
         var personnelCount = await _context.Set<PersonnelSchoolAssignment>()
-            .CountAsync(psa => schoolCodes.Contains(psa.SchoolCode));
+            .CountAsync(psa => schoolCodes.Contains(psa.SchoolCode)
+                && (psa.EndDate == null || psa.EndDate >= summaryToday));
 
         return Ok(new AreaSchoolsSummaryDto(
             TotalSchools: schools.Count,
@@ -637,9 +649,12 @@ public class SchoolController : ControllerBase
 
             school.Principal = $"{personnel.FirstName} {personnel.LastName}";
 
-            // Ensure personnel has school assignment
+            // Ensure personnel has school assignment. Match only an OPEN row —
+            // reusing a closed one would resurrect a posting the person already
+            // ended (and re-flag it primary alongside their current school).
             var assignment = await _context.PersonnelSchoolAssignments
-                .FirstOrDefaultAsync(a => a.PersonnelId == request.PersonnelId.Value && a.SchoolCode == schoolCode);
+                .FirstOrDefaultAsync(a => a.PersonnelId == request.PersonnelId.Value
+                    && a.SchoolCode == schoolCode && a.EndDate == null);
 
             if (assignment == null)
             {
