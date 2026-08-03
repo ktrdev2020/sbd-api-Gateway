@@ -48,6 +48,12 @@ public class GuestStudentInfoController : ControllerBase
         ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
         ?? "http://localhost:5032";
 
+    /// <summary>Plan #105 — available DMC periods (ปีการศึกษา/รอบ) for the dropdown.</summary>
+    [HttpGet("periods")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public Task<IActionResult> GetPeriods(CancellationToken ct) =>
+        ForwardGetAsync("/api/v1/guest/student-info/periods", ct);
+
     [HttpGet("summary")]
     [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
     public async Task<IActionResult> GetSummary(CancellationToken ct)
@@ -205,7 +211,11 @@ public class GuestStudentInfoController : ControllerBase
         var http = _httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(30);
 
-        var req = new HttpRequestMessage(HttpMethod.Get, StudentApiBase + path);
+        // Plan #105 — pass the caller's query string through (?year=&term= period
+        // selection). Applies to every forwarded call, including the by-school
+        // fetch inside EnrichSummaryWithDistrictsAsync (same HTTP context).
+        var query = Request?.QueryString.Value ?? string.Empty;
+        var req = new HttpRequestMessage(HttpMethod.Get, StudentApiBase + path + query);
         // Public endpoint — do NOT forward Authorization header.
 
         try
