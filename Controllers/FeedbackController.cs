@@ -1,0 +1,112 @@
+using System.Security.Claims;
+using Gateway.Data;
+using Gateway.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SBD.Infrastructure.Data;
+
+namespace Gateway.Controllers;
+
+/// <summary>
+/// Plan #103 — Feedback FAB submit surface for every authenticated role.
+/// Client sends page context (url/module/pageTitle/viewport); identity and
+/// scope (user id, role, school_code, area_id) are taken from JWT claims —
+/// never from the request body — so reports can't be spoofed per role.
+/// Admin triage/report lives in Admin/AdminFeedbackController.
+/// </summary>
+[ApiController]
+[Route("api/v1/feedback")]
+[Authorize]
+public class FeedbackController : ControllerBase
+{
+    private static readonly HashSet<string> AllowedCategories =
+        new(StringComparer.OrdinalIgnoreCase) { "bug", "improvement", "feature", "data", "other" };
+
+    private readonly GatewayDbContext _db;
+    private readonly ILogger<FeedbackController> _logger;
+
+    public FeedbackController(SbdDbContext db, ILogger<FeedbackController> logger)
+    {
+        _db = (GatewayDbContext)db;
+        _logger = logger;
+    }
+
+    public record SubmitFeedbackRequest(
+        string Url,
+        string Category,
+        string Message,
+        string? ModuleCode,
+        string? PageTitle,
+        string? Viewport,
+        string? DisplayName);
+
+    [HttpPost]
+    public async Task<IActionResult> Submit([FromBody] SubmitFeedbackRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Url) || req.Url.Length > 500)
+            return BadRequest(new { message = "url ไม่ถูกต้อง" });
+        if (!AllowedCategories.Contains(req.Category ?? string.Empty))
+            return BadRequest(new { message = "category ต้องเป็น bug/improvement/feature/data/other" });
+        var message = (req.Message ?? string.Empty).Trim();
+        if (message.Length < 5)
+            return BadRequest(new { message = "กรุณาระบุรายละเอียดอย่างน้อย 5 ตัวอักษร" });
+        if (message.Length > 4000)
+            return BadRequest(new { message = "รายละเอียดยาวเกิน 4000 ตัวอักษร" });
+
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        int? userId = int.TryParse(userIdStr, out var parsed) ? parsed : null;
+        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value ?? "unknown";
+        var schoolCode = User.FindFirst("school_code")?.Value ?? User.FindFirst("school_id")?.Value;
+        var areaId = User.FindFirst("area_id")?.Value;
+
+        var entry = new FeedbackEntry
+        {
+            UserId = userId,
+            DisplayName = Truncate(req.DisplayName, 200) ?? User.Identity?.Name,
+            Role = Truncate(role, 50)!,
+            SchoolCode = Truncate(schoolCode, 10),
+            AreaId = Truncate(areaId, 20),
+            Url = Truncate(req.Url, 500)!,
+            ModuleCode = Truncate(req.ModuleCode, 50),
+            PageTitle = Truncate(req.PageTitle, 200),
+            Category = req.Category!.ToLowerInvariant(),
+            Message = message,
+            UserAgent = Truncate(Request.Headers.UserAgent.ToString(), 400),
+            Viewport = Truncate(req.Viewport, 50),
+            Status = "new",
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+
+        _db.FeedbackEntries.Add(entry);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Feedback #{Id} [{Category}] from {Role} on {Url}",
+            entry.Id, entry.Category, entry.Role, entry.Url);
+
+        return Ok(new { id = entry.Id, createdAt = entry.CreatedAt });
+    }
+
+    /// <summary>Caller's recent submissions — lets the FAB show "ส่งไปแล้ว" history.</summary>
+    [HttpGet("my")]
+    public async Task<IActionResult> My()
+    {
+        var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!int.TryParse(userIdStr, out var userId)) return Ok(Array.Empty<object>());
+
+        var items = await _db.FeedbackEntries.AsNoTracking()
+            .Where(f => f.UserId == userId)
+            .OrderByDescending(f => f.CreatedAt)
+            .Take(20)
+            .Select(f => new { f.Id, f.Url, f.ModuleCode, f.Category, f.Message, f.Status, f.CreatedAt })
+            .ToListAsync();
+        return Ok(items);
+    }
+
+    private static string? Truncate(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var v = value.Trim();
+        return v.Length <= max ? v : v[..max];
+    }
+}

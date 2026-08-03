@@ -28,10 +28,11 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
     {
         ["currentAcademicYear"] = 2569,
         ["currentTerm"] = 1,
+        ["feedbackEnabled"] = true,     // Plan #103 — Feedback FAB visibility
     };
 
-    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm);
-    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm);
+    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm, bool FeedbackEnabled);
+    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm, bool? FeedbackEnabled);
 
     /// <summary>Public read — anyone with a valid client can fetch.</summary>
     [HttpGet("system-settings")]
@@ -41,7 +42,8 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         var stored = await cache.GetAsync<Dictionary<string, object>>(CacheKey) ?? new();
         return Ok(new SystemSettingsDto(
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
-            CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"])
+            CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
+            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"])
         ));
     }
 
@@ -65,15 +67,33 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
                 return BadRequest(new { message = "currentTerm ต้องเป็น 1 หรือ 2" });
             stored["currentTerm"] = term;
         }
+        if (req.FeedbackEnabled is bool feedbackEnabled)
+        {
+            stored["feedbackEnabled"] = feedbackEnabled;
+        }
 
         await cache.SetAsync(CacheKey, stored, TimeSpan.FromDays(3650));
-        logger.LogInformation("System settings updated by {User}: AY={AY} Term={Term}",
-            User.Identity?.Name, stored.GetValueOrDefault("currentAcademicYear"), stored.GetValueOrDefault("currentTerm"));
+        logger.LogInformation("System settings updated by {User}: AY={AY} Term={Term} Feedback={Feedback}",
+            User.Identity?.Name, stored.GetValueOrDefault("currentAcademicYear"),
+            stored.GetValueOrDefault("currentTerm"), stored.GetValueOrDefault("feedbackEnabled"));
 
         return Ok(new SystemSettingsDto(
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
-            CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"])
+            CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
+            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"])
         ));
+    }
+
+    private static bool GetBool(Dictionary<string, object> map, string key, bool fallback)
+    {
+        if (!map.TryGetValue(key, out var raw) || raw is null) return fallback;
+        return raw switch
+        {
+            bool b => b,
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            System.Text.Json.JsonElement je when je.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False => je.GetBoolean(),
+            _ => fallback
+        };
     }
 
     private static int GetInt(Dictionary<string, object> map, string key, int fallback)

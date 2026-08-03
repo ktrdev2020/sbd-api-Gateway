@@ -1308,6 +1308,37 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Seed] Plan #102 — Nt/Rt/Qr SchoolResults tables ensured.");
 
+    // ── Plan #103 — feedback_entries (Feedback FAB: per-page user feedback) ───
+    // Written by FeedbackController (any authenticated role), triaged via
+    // Admin/AdminFeedbackController. Toggle lives in Redis system settings
+    // (key feedbackEnabled) — no schema needed for the on/off switch.
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS feedback_entries (
+            id           BIGSERIAL PRIMARY KEY,
+            user_id      INT,
+            display_name VARCHAR(200),
+            role         VARCHAR(50)  NOT NULL DEFAULT 'unknown',
+            school_code  VARCHAR(10),
+            area_id      VARCHAR(20),
+            url          VARCHAR(500) NOT NULL,
+            module_code  VARCHAR(50),
+            page_title   VARCHAR(200),
+            category     VARCHAR(20)  NOT NULL,
+            message      TEXT         NOT NULL,
+            user_agent   VARCHAR(400),
+            viewport     VARCHAR(50),
+            status       VARCHAR(20)  NOT NULL DEFAULT 'new',
+            admin_note   TEXT,
+            created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS ix_feedback_entries_module  ON feedback_entries (module_code);
+        CREATE INDEX IF NOT EXISTS ix_feedback_entries_status  ON feedback_entries (status);
+        CREATE INDEX IF NOT EXISTS ix_feedback_entries_role    ON feedback_entries (role);
+        CREATE INDEX IF NOT EXISTS ix_feedback_entries_created ON feedback_entries (created_at);
+    ");
+    Console.WriteLine("[Seed] Plan #103 — feedback_entries table ensured.");
+
     // ── MenuItems — DB-backed sidebar menu per role (incl. public Guest menu) ──
     await db.Database.ExecuteSqlRawAsync(@"
         CREATE TABLE IF NOT EXISTS ""MenuItems"" (
@@ -1351,6 +1382,7 @@ using (var scope = app.Services.CreateScope())
         ('SuperAdmin','mcp','MCP Tools','fas fa-robot','/administrator/mcp',15,TRUE,FALSE,NULL),
         ('SuperAdmin','menu-management','จัดการเมนู','fas fa-list-ul','/administrator/menu-management',16,TRUE,FALSE,NULL),
         ('SuperAdmin','payslip','สลิปเงินเดือน','fas fa-file-invoice-dollar','/administrator/payslip',17,TRUE,FALSE,NULL),
+        ('SuperAdmin','feedback','ข้อเสนอแนะผู้ใช้','fas fa-comment-dots','/administrator/feedback',18,TRUE,FALSE,NULL),
         ('AreaAdmin','dashboard','ภาพรวมเขต','fas fa-chart-pie','{{basePath}}',1,TRUE,TRUE,NULL),
         ('AreaAdmin','schools','โรงเรียน','fas fa-school','{{basePath}}/schools',2,TRUE,FALSE,NULL),
         ('AreaAdmin','students','นักเรียน','fas fa-user-graduate','{{basePath}}/students',3,TRUE,FALSE,NULL),

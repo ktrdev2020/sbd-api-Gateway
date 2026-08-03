@@ -36,6 +36,8 @@ public class GatewayDbContext : SbdDbContext
     public DbSet<TeacherHomeroomAssignment> TeacherHomeroomAssignments => Set<TeacherHomeroomAssignment>();
     // ── Plan #46 — งานภายใต้แต่ละฝ่ายงาน (School Org Structure) ──
     public DbSet<SchoolOrgTask> SchoolOrgTasks => Set<SchoolOrgTask>();
+    // ── Plan #103 — Feedback FAB (user feedback per page/module/role) ──
+    public DbSet<FeedbackEntry> FeedbackEntries => Set<FeedbackEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -278,6 +280,34 @@ public class GatewayDbContext : SbdDbContext
                 .WithMany()
                 .HasForeignKey(e => e.WorkGroupId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Plan #103 — FeedbackEntry ──
+        modelBuilder.Entity<FeedbackEntry>(entity =>
+        {
+            entity.ToTable("feedback_entries");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.DisplayName).HasColumnName("display_name").HasMaxLength(200);
+            entity.Property(e => e.Role).HasColumnName("role").HasMaxLength(50).IsRequired();
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10);
+            entity.Property(e => e.AreaId).HasColumnName("area_id").HasMaxLength(20);
+            entity.Property(e => e.Url).HasColumnName("url").HasMaxLength(500).IsRequired();
+            entity.Property(e => e.ModuleCode).HasColumnName("module_code").HasMaxLength(50);
+            entity.Property(e => e.PageTitle).HasColumnName("page_title").HasMaxLength(200);
+            entity.Property(e => e.Category).HasColumnName("category").HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Message).HasColumnName("message").IsRequired();
+            entity.Property(e => e.UserAgent).HasColumnName("user_agent").HasMaxLength(400);
+            entity.Property(e => e.Viewport).HasColumnName("viewport").HasMaxLength(50);
+            entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("new");
+            entity.Property(e => e.AdminNote).HasColumnName("admin_note");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.HasIndex(e => e.ModuleCode).HasDatabaseName("ix_feedback_entries_module");
+            entity.HasIndex(e => e.Status).HasDatabaseName("ix_feedback_entries_status");
+            entity.HasIndex(e => e.Role).HasDatabaseName("ix_feedback_entries_role");
+            entity.HasIndex(e => e.CreatedAt).HasDatabaseName("ix_feedback_entries_created");
         });
     }
 
