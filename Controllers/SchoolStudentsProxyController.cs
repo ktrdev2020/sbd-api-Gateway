@@ -27,17 +27,20 @@ public class SchoolStudentsProxyController : ControllerBase
     private readonly IHttpClientFactory _httpFactory;
     private readonly IConfiguration _config;
     private readonly SbdDbContext _db;
+    private readonly Gateway.Services.ICacheService _cache;
     private readonly ILogger<SchoolStudentsProxyController> _logger;
 
     public SchoolStudentsProxyController(
         IHttpClientFactory httpFactory,
         IConfiguration config,
         SbdDbContext db,
+        Gateway.Services.ICacheService cache,
         ILogger<SchoolStudentsProxyController> logger)
     {
         _httpFactory = httpFactory;
         _config = config;
         _db = db;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -180,6 +183,29 @@ public class SchoolStudentsProxyController : ControllerBase
     [HttpPost("bulk-promote")]
     public async Task<IActionResult> BulkPromote([FromRoute] string schoolCode, CancellationToken ct)
     {
+        // Plan #104 — promotion lock. After the authoritative DMC import the
+        // district freezes bulk-promote so school edits can't drift the roster
+        // away from DMC. SuperAdmin re-opens via PUT /api/v1/admin/system-settings
+        // { promotionLocked: false }. Fail-locked default (missing setting = locked).
+        var settings = await _cache.GetAsync<Dictionary<string, object>>("system:settings:v1") ?? new();
+        var locked = !settings.TryGetValue("promotionLocked", out var raw) || raw switch
+        {
+            bool b => b,
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            System.Text.Json.JsonElement je when je.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False => je.GetBoolean(),
+            _ => true,
+        };
+        if (locked)
+        {
+            _logger.LogWarning("Bulk-promote blocked by promotion lock: school={School} user={User}",
+                schoolCode, User.Identity?.Name);
+            return StatusCode(StatusCodes.Status423Locked, new
+            {
+                message = "ระบบล็อคการเลื่อนชั้นชั่วคราว — เขตพื้นที่ได้นำเข้าข้อมูลนักเรียนจาก DMC ปีการศึกษา 2569 แล้ว หากต้องการแก้ไขกรุณาติดต่อผู้ดูแลระบบเขตพื้นที่",
+                promotionLocked = true,
+            });
+        }
+
         var smis = await ResolveSmisAsync(schoolCode, ct);
         return await ForwardAsync(HttpMethod.Post, $"/api/v1/school/{smis}/students/bulk-promote", ct);
     }

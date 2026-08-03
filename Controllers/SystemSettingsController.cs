@@ -29,10 +29,11 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         ["currentAcademicYear"] = 2569,
         ["currentTerm"] = 1,
         ["feedbackEnabled"] = true,     // Plan #103 — Feedback FAB visibility
+        ["promotionLocked"] = true,     // Plan #104 — block bulk-promote after the authoritative DMC import
     };
 
-    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm, bool FeedbackEnabled);
-    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm, bool? FeedbackEnabled);
+    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm, bool FeedbackEnabled, bool PromotionLocked);
+    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm, bool? FeedbackEnabled, bool? PromotionLocked);
 
     /// <summary>Public read — anyone with a valid client can fetch.</summary>
     [HttpGet("system-settings")]
@@ -43,7 +44,8 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         return Ok(new SystemSettingsDto(
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
             CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
-            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"])
+            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"]),
+            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"])
         ));
     }
 
@@ -71,6 +73,10 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         {
             stored["feedbackEnabled"] = feedbackEnabled;
         }
+        if (req.PromotionLocked is bool promotionLocked)
+        {
+            stored["promotionLocked"] = promotionLocked;
+        }
 
         await cache.SetAsync(CacheKey, stored, TimeSpan.FromDays(3650));
         logger.LogInformation("System settings updated by {User}: AY={AY} Term={Term} Feedback={Feedback}",
@@ -80,7 +86,8 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         return Ok(new SystemSettingsDto(
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
             CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
-            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"])
+            FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"]),
+            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"])
         ));
     }
 
