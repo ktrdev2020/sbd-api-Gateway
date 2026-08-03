@@ -1316,6 +1316,31 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Seed] Plan #102 — Nt/Rt/Qr SchoolResults tables ensured.");
 
+    // ── Plan #107 — school enrichment reporting tables (DMC 10 มิ.ย. + การเงิน) ─
+    // Populated by tools/seed-school-enrichment.py (main repo).
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""SchoolInfraSnapshots"" (
+            ""Id"" BIGSERIAL PRIMARY KEY, ""Year"" INT NOT NULL, ""SmisCode"" TEXT NOT NULL,
+            ""HasElectricity"" BOOLEAN, ""InPowerServiceArea"" BOOLEAN,
+            ""HasInternet"" BOOLEAN, ""InternetType"" TEXT,
+            ""HasWater"" BOOLEAN, ""WaterSources"" TEXT,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now());
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SchoolInfraSnapshots_Key"" ON ""SchoolInfraSnapshots"" (""Year"",""SmisCode"");
+
+        CREATE TABLE IF NOT EXISTS ""SchoolShortageStats"" (
+            ""Id"" BIGSERIAL PRIMARY KEY, ""Year"" INT NOT NULL, ""SmisCode"" TEXT NOT NULL,
+            ""Category"" TEXT NOT NULL, ""Male"" INT, ""Female"" INT, ""Total"" INT,
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now());
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SchoolShortageStats_Key"" ON ""SchoolShortageStats"" (""Year"",""SmisCode"",""Category"");
+
+        CREATE TABLE IF NOT EXISTS ""SchoolIncomeReports"" (
+            ""Id"" BIGSERIAL PRIMARY KEY, ""FiscalYear"" INT NOT NULL, ""SmisCode"" TEXT NOT NULL,
+            ""IncomeType"" TEXT NOT NULL, ""Amount"" NUMERIC(14,2),
+            ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now());
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SchoolIncomeReports_Key"" ON ""SchoolIncomeReports"" (""FiscalYear"",""SmisCode"",""IncomeType"");
+    ");
+    Console.WriteLine("[Seed] Plan #107 — school enrichment reporting tables ensured.");
+
     // ── Plan #103 — feedback_entries (Feedback FAB: per-page user feedback) ───
     // Written by FeedbackController (any authenticated role), triaged via
     // Admin/AdminFeedbackController. Toggle lives in Redis system settings

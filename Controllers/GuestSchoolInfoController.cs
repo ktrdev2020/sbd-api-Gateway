@@ -247,6 +247,88 @@ public class GuestSchoolInfoController : ControllerBase
         }
     }
 
+    // ═══════════════ Plan #107 — classification + map (real DMC school data) ═══
+
+    /// <summary>
+    /// School classification from real data: teaching levels (DMC ชั้นต่ำสุด/สูงสุด),
+    /// establishment decades, infrastructure (ไฟฟ้า/เน็ต/น้ำ), director coverage.
+    /// </summary>
+    [HttpGet("classification")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestSchoolClassificationDto>> GetClassification(CancellationToken ct)
+    {
+        var levels = await _context.Database.SqlQuery<LevelAggRow>($"""
+            SELECT
+              COUNT(*) FILTER (WHERE "TeachesUpperSecondary")::int AS "ToM6",
+              COUNT(*) FILTER (WHERE "TeachesLowerSecondary" AND NOT COALESCE("TeachesUpperSecondary", false))::int AS "ToM3",
+              COUNT(*) FILTER (WHERE "TeachesPrimary" AND NOT COALESCE("TeachesLowerSecondary", false))::int AS "ToP6",
+              COUNT(*) FILTER (WHERE COALESCE("TeachesPreschool", false) AND NOT COALESCE("TeachesPrimary", false))::int AS "PreOnly",
+              COUNT(*)::int AS "Total"
+            FROM "Schools" WHERE "DeletedAt" IS NULL AND "IsActive"
+            """).FirstAsync(ct);
+
+        var decades = await _context.Database.SqlQuery<DecadeRow>($"""
+            SELECT ((EXTRACT(YEAR FROM "EstablishedDate")::int + 543) / 10 * 10) AS "DecadeBe",
+                   COUNT(*)::int AS "Count"
+            FROM "Schools" WHERE "DeletedAt" IS NULL AND "IsActive" AND "EstablishedDate" IS NOT NULL
+            GROUP BY 1 ORDER BY 1
+            """).ToListAsync(ct);
+
+        var infra = await _context.Database.SqlQuery<InfraAggRow>($"""
+            SELECT
+              COUNT(*) FILTER (WHERE "HasElectricity")::int AS "Electricity",
+              COUNT(*) FILTER (WHERE "HasInternet")::int AS "Internet",
+              COUNT(*) FILTER (WHERE "HasWater")::int AS "Water",
+              COUNT(*)::int AS "Total"
+            FROM "SchoolInfraSnapshots"
+            WHERE "Year" = (SELECT MAX("Year") FROM "SchoolInfraSnapshots")
+            """).FirstOrDefaultAsync(ct);
+
+        var inetTypes = await _context.Database.SqlQuery<NameCountRow>($"""
+            SELECT COALESCE("InternetType", 'ไม่ระบุ') AS "Name", COUNT(*)::int AS "Count"
+            FROM "SchoolInfraSnapshots"
+            WHERE "Year" = (SELECT MAX("Year") FROM "SchoolInfraSnapshots") AND "HasInternet"
+            GROUP BY 1 ORDER BY 2 DESC
+            """).ToListAsync(ct);
+
+        var director = await _context.Database.SqlQuery<DirectorAggRow>($"""
+            SELECT
+              COUNT(DISTINCT a."SchoolCode") FILTER (WHERE a."Position" = 'ผู้อำนวยการสถานศึกษา')::int AS "WithDirector",
+              COUNT(DISTINCT a."SchoolCode")::int AS "SchoolsWithStaff",
+              COUNT(*)::int AS "TotalStaff"
+            FROM "PersonnelSchoolAssignments" a WHERE a."EndDate" IS NULL
+            """).FirstAsync(ct);
+
+        return Ok(new GuestSchoolClassificationDto(
+            new GuestLevelBreakdownDto(levels.Total, levels.ToP6, levels.ToM3, levels.ToM6, levels.PreOnly),
+            decades.Select(d => new GuestDecadeDto((int)d.DecadeBe, d.Count)).ToList(),
+            infra is null ? null : new GuestInfraDto(infra.Total, infra.Electricity, infra.Internet, infra.Water,
+                inetTypes.Select(t => new GuestNameCountDto(t.Name, t.Count)).ToList()),
+            new GuestDirectorCoverageDto(director.WithDirector, levels.Total - director.WithDirector, director.TotalStaff)));
+    }
+
+    /// <summary>All schools with coordinates (196/196 from DMC) for the map view.</summary>
+    [HttpGet("map")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<IEnumerable<GuestSchoolMapDto>>> GetMap(CancellationToken ct)
+    {
+        var rows = await _context.Database.SqlQuery<GuestSchoolMapDto>($"""
+            SELECT s."SmisCode" AS "SmisCode", s."NameTh" AS "Name",
+                   s."Latitude" AS "Lat", s."Longitude" AS "Lng",
+                   CASE WHEN "TeachesUpperSecondary" THEN 'm6'
+                        WHEN "TeachesLowerSecondary" THEN 'm3'
+                        ELSE 'p6' END AS "LevelType",
+                   d."NameTh" AS "District"
+            FROM "Schools" s
+            LEFT JOIN "Addresses" a ON a."Id" = s."AddressId"
+            LEFT JOIN "SubDistricts" sd ON sd."Id" = a."SubDistrictId"
+            LEFT JOIN "Districts" d ON d."Id" = sd."DistrictId"
+            WHERE s."DeletedAt" IS NULL AND s."IsActive" AND s."Latitude" IS NOT NULL
+            ORDER BY s."NameTh"
+            """).ToListAsync(ct);
+        return Ok(rows);
+    }
+
     private static string SlugFromDistrict(string name) => name switch
     {
         "ขุขันธ์"   => "khukhan",
@@ -292,3 +374,62 @@ public record GuestSchoolAddressRowDto(
     string? District,
     string? Phone
 );
+
+// ── Plan #107 — classification/map row shapes + DTOs ─────────────────────────
+
+internal sealed class LevelAggRow
+{
+    public int ToM6 { get; set; }
+    public int ToM3 { get; set; }
+    public int ToP6 { get; set; }
+    public int PreOnly { get; set; }
+    public int Total { get; set; }
+}
+
+internal sealed class DecadeRow
+{
+    public decimal DecadeBe { get; set; }
+    public int Count { get; set; }
+}
+
+internal sealed class InfraAggRow
+{
+    public int Electricity { get; set; }
+    public int Internet { get; set; }
+    public int Water { get; set; }
+    public int Total { get; set; }
+}
+
+internal sealed class NameCountRow
+{
+    public string Name { get; set; } = "";
+    public int Count { get; set; }
+}
+
+internal sealed class DirectorAggRow
+{
+    public int WithDirector { get; set; }
+    public int SchoolsWithStaff { get; set; }
+    public int TotalStaff { get; set; }
+}
+
+public record GuestLevelBreakdownDto(int Total, int ToP6, int ToM3, int ToM6, int PreschoolOnly);
+public record GuestDecadeDto(int DecadeBe, int Count);
+public record GuestNameCountDto(string Name, int Count);
+public record GuestInfraDto(int Total, int Electricity, int Internet, int Water, List<GuestNameCountDto> InternetTypes);
+public record GuestDirectorCoverageDto(int WithDirector, int WithoutDirector, int TotalStaff);
+public record GuestSchoolClassificationDto(
+    GuestLevelBreakdownDto Levels,
+    List<GuestDecadeDto> EstablishedDecades,
+    GuestInfraDto? Infrastructure,
+    GuestDirectorCoverageDto Directors);
+
+public class GuestSchoolMapDto
+{
+    public string SmisCode { get; set; } = "";
+    public string Name { get; set; } = "";
+    public decimal? Lat { get; set; }
+    public decimal? Lng { get; set; }
+    public string LevelType { get; set; } = "p6";
+    public string? District { get; set; }
+}
