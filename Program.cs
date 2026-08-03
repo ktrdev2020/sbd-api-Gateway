@@ -1250,6 +1250,64 @@ using (var scope = app.Services.CreateScope())
     ");
     Console.WriteLine("[Seed] Plan #101 — OnetSchoolResults table ensured.");
 
+    // ── Plan #102 — NT / RT / QR school-level results (academic-info hub) ─────
+    // Populated by tools/import-academic.mjs (main repo). All keyed by SmisCode
+    // (NT/RT source CSVs carry OBEC SchoolCode — converted at import time).
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""NtSchoolResults"" (
+            ""Id""            BIGSERIAL PRIMARY KEY,
+            ""EducationYear"" INT  NOT NULL,
+            ""SmisCode""      TEXT NOT NULL,
+            ""SchoolSize""    TEXT,
+            ""MathScore""     NUMERIC(6,2),
+            ""MathLevel""     TEXT,
+            ""MathLevelCode"" INT,
+            ""ThaiScore""     NUMERIC(6,2),
+            ""ThaiLevel""     TEXT,
+            ""ThaiLevelCode"" INT,
+            ""TotalScore""    NUMERIC(6,2),
+            ""TotalLevel""    TEXT,
+            ""TotalLevelCode"" INT,
+            ""CreatedAt""     TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_NtSchoolResults_Key"" ON ""NtSchoolResults"" (""EducationYear"",""SmisCode"");
+
+        CREATE TABLE IF NOT EXISTS ""RtSchoolResults"" (
+            ""Id""             BIGSERIAL PRIMARY KEY,
+            ""EducationYear""  INT  NOT NULL,
+            ""SmisCode""       TEXT NOT NULL,
+            ""SchoolSize""     TEXT,
+            ""ReadAloudScore"" NUMERIC(6,2),
+            ""ReadAloudPct""   NUMERIC(6,2),
+            ""ReadAloudLevel"" TEXT,
+            ""ReadCompScore""  NUMERIC(6,2),
+            ""ReadCompPct""    NUMERIC(6,2),
+            ""ReadCompLevel""  TEXT,
+            ""TotalPct""       NUMERIC(6,2),
+            ""TotalLevel""     TEXT,
+            ""CreatedAt""      TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_RtSchoolResults_Key"" ON ""RtSchoolResults"" (""EducationYear"",""SmisCode"");
+
+        CREATE TABLE IF NOT EXISTS ""QrSchoolResults"" (
+            ""Id""            BIGSERIAL PRIMARY KEY,
+            ""EducationYear"" INT  NOT NULL,
+            ""GradeLevel""    TEXT NOT NULL,
+            ""SmisCode""      TEXT NOT NULL,
+            ""TotalStudents"" INT,
+            ""DcPass""        INT,
+            ""DcGood""        INT,
+            ""DcExcellent""   INT,
+            ""RcPass""        INT,
+            ""RcGood""        INT,
+            ""RcExcellent""   INT,
+            ""CreatedAt""     TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_QrSchoolResults_Key"" ON ""QrSchoolResults"" (""EducationYear"",""GradeLevel"",""SmisCode"");
+        CREATE INDEX IF NOT EXISTS ""IX_QrSchoolResults_Smis"" ON ""QrSchoolResults"" (""SmisCode"");
+    ");
+    Console.WriteLine("[Seed] Plan #102 — Nt/Rt/Qr SchoolResults tables ensured.");
+
     // ── MenuItems — DB-backed sidebar menu per role (incl. public Guest menu) ──
     await db.Database.ExecuteSqlRawAsync(@"
         CREATE TABLE IF NOT EXISTS ""MenuItems"" (

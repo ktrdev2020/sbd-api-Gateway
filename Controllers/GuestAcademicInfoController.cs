@@ -131,6 +131,305 @@ public class GuestAcademicInfoController : ControllerBase
         return Ok(new GuestOnetSchoolsDto(year.Value, g, schools));
     }
 
+    // ═════════════════════════════ Plan #102 — NT ═══════════════════════════
+
+    private static readonly string[] QrGrades =
+        ["P1", "P2", "P3", "P4", "P5", "P6", "M1", "M2", "M3", "M4", "M5", "M6"];
+
+    private async Task<int?> LatestYearOfAsync(string table, CancellationToken ct) =>
+        table switch
+        {
+            "nt" => await _context.Database.SqlQuery<int?>(
+                $"SELECT MAX(\"EducationYear\") AS \"Value\" FROM \"NtSchoolResults\"").FirstOrDefaultAsync(ct),
+            "rt" => await _context.Database.SqlQuery<int?>(
+                $"SELECT MAX(\"EducationYear\") AS \"Value\" FROM \"RtSchoolResults\"").FirstOrDefaultAsync(ct),
+            "qr" => await _context.Database.SqlQuery<int?>(
+                $"SELECT MAX(\"EducationYear\") AS \"Value\" FROM \"QrSchoolResults\"").FirstOrDefaultAsync(ct),
+            _ => await LatestYearAsync(ct),
+        };
+
+    private async Task<List<NtRow>> NtRowsAsync(int year, CancellationToken ct) =>
+        await _context.Database.SqlQuery<NtRow>($"""
+            SELECT r."SmisCode"   AS "SmisCode",
+                   s."NameTh"     AS "SchoolName",
+                   r."SchoolSize" AS "SchoolSize",
+                   r."MathScore"  AS "MathScore",  r."MathLevel"  AS "MathLevel",
+                   r."ThaiScore"  AS "ThaiScore",  r."ThaiLevel"  AS "ThaiLevel",
+                   r."TotalScore" AS "TotalScore", r."TotalLevel" AS "TotalLevel"
+            FROM "NtSchoolResults" r
+            JOIN "Schools" s ON s."SmisCode" = r."SmisCode" AND s."DeletedAt" IS NULL
+            WHERE r."EducationYear" = {year}
+            """).ToListAsync(ct);
+
+    /// <summary>NT ป.3 area summary: averages + quality-level distributions.</summary>
+    [HttpGet("nt/summary")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestNtSummaryDto>> GetNtSummary(CancellationToken ct)
+    {
+        var year = await LatestYearOfAsync("nt", ct);
+        if (year is null) return Ok(new GuestNtSummaryDto(0, 0, null, null, null, [], [], []));
+
+        var rows = await NtRowsAsync(year.Value, ct);
+        static List<GuestLevelCountDto> Dist(IEnumerable<string?> levels) => levels
+            .Where(l => !string.IsNullOrEmpty(l))
+            .GroupBy(l => l!)
+            .Select(g => new GuestLevelCountDto(g.Key, g.Count()))
+            .OrderByDescending(d => d.Count)
+            .ToList();
+
+        return Ok(new GuestNtSummaryDto(
+            year.Value, rows.Count,
+            Avg(rows.Select(r => r.MathScore)), Avg(rows.Select(r => r.ThaiScore)), Avg(rows.Select(r => r.TotalScore)),
+            Dist(rows.Select(r => r.MathLevel)), Dist(rows.Select(r => r.ThaiLevel)), Dist(rows.Select(r => r.TotalLevel))));
+    }
+
+    /// <summary>NT per-school results, ranked by total score.</summary>
+    [HttpGet("nt/schools")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestNtSchoolsDto>> GetNtSchools(CancellationToken ct)
+    {
+        var year = await LatestYearOfAsync("nt", ct);
+        if (year is null) return Ok(new GuestNtSchoolsDto(0, []));
+        var rows = await NtRowsAsync(year.Value, ct);
+        return Ok(new GuestNtSchoolsDto(year.Value,
+            rows.OrderByDescending(r => r.TotalScore ?? -1).ToList()));
+    }
+
+    // ═════════════════════════════ Plan #102 — RT ═══════════════════════════
+
+    private async Task<List<RtRow>> RtRowsAsync(int year, CancellationToken ct) =>
+        await _context.Database.SqlQuery<RtRow>($"""
+            SELECT r."SmisCode"       AS "SmisCode",
+                   s."NameTh"         AS "SchoolName",
+                   r."SchoolSize"     AS "SchoolSize",
+                   r."ReadAloudScore" AS "ReadAloudScore", r."ReadAloudPct" AS "ReadAloudPct", r."ReadAloudLevel" AS "ReadAloudLevel",
+                   r."ReadCompScore"  AS "ReadCompScore",  r."ReadCompPct"  AS "ReadCompPct",  r."ReadCompLevel"  AS "ReadCompLevel",
+                   r."TotalPct"       AS "TotalPct",       r."TotalLevel"   AS "TotalLevel"
+            FROM "RtSchoolResults" r
+            JOIN "Schools" s ON s."SmisCode" = r."SmisCode" AND s."DeletedAt" IS NULL
+            WHERE r."EducationYear" = {year}
+            """).ToListAsync(ct);
+
+    /// <summary>RT ป.1 area summary: averages + quality-level distributions.</summary>
+    [HttpGet("rt/summary")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestRtSummaryDto>> GetRtSummary(CancellationToken ct)
+    {
+        var year = await LatestYearOfAsync("rt", ct);
+        if (year is null) return Ok(new GuestRtSummaryDto(0, 0, null, null, null, [], [], []));
+
+        var rows = await RtRowsAsync(year.Value, ct);
+        static List<GuestLevelCountDto> Dist(IEnumerable<string?> levels) => levels
+            .Where(l => !string.IsNullOrEmpty(l))
+            .GroupBy(l => l!)
+            .Select(g => new GuestLevelCountDto(g.Key, g.Count()))
+            .OrderByDescending(d => d.Count)
+            .ToList();
+
+        return Ok(new GuestRtSummaryDto(
+            year.Value, rows.Count,
+            Avg(rows.Select(r => r.ReadAloudPct)), Avg(rows.Select(r => r.ReadCompPct)), Avg(rows.Select(r => r.TotalPct)),
+            Dist(rows.Select(r => r.ReadAloudLevel)), Dist(rows.Select(r => r.ReadCompLevel)), Dist(rows.Select(r => r.TotalLevel))));
+    }
+
+    /// <summary>RT per-school results, ranked by total percent.</summary>
+    [HttpGet("rt/schools")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestRtSchoolsDto>> GetRtSchools(CancellationToken ct)
+    {
+        var year = await LatestYearOfAsync("rt", ct);
+        if (year is null) return Ok(new GuestRtSchoolsDto(0, []));
+        var rows = await RtRowsAsync(year.Value, ct);
+        return Ok(new GuestRtSchoolsDto(year.Value,
+            rows.OrderByDescending(r => r.TotalPct ?? -1).ToList()));
+    }
+
+    // ═════════════════════════════ Plan #102 — QR ═══════════════════════════
+
+    /// <summary>คุณลักษณะอันพึงประสงค์ + อ่านคิดวิเคราะห์ฯ — per-grade aggregates.</summary>
+    [HttpGet("qr/summary")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestQrSummaryDto>> GetQrSummary(CancellationToken ct)
+    {
+        var year = await LatestYearOfAsync("qr", ct);
+        if (year is null) return Ok(new GuestQrSummaryDto(0, []));
+
+        var rows = await _context.Database.SqlQuery<QrAggRow>($"""
+            SELECT "GradeLevel" AS "Grade",
+                   COUNT(*)::int AS "SchoolCount",
+                   COALESCE(SUM("TotalStudents"),0)::int AS "Students",
+                   COALESCE(SUM("DcPass"),0)::int AS "DcPass",
+                   COALESCE(SUM("DcGood"),0)::int AS "DcGood",
+                   COALESCE(SUM("DcExcellent"),0)::int AS "DcExcellent",
+                   COALESCE(SUM("RcPass"),0)::int AS "RcPass",
+                   COALESCE(SUM("RcGood"),0)::int AS "RcGood",
+                   COALESCE(SUM("RcExcellent"),0)::int AS "RcExcellent"
+            FROM "QrSchoolResults"
+            WHERE "EducationYear" = {year}
+            GROUP BY "GradeLevel"
+            """).ToListAsync(ct);
+
+        var grades = QrGrades
+            .Select(g => rows.FirstOrDefault(r => r.Grade == g))
+            .Where(r => r is not null)
+            .Select(r => new GuestQrGradeDto(r!.Grade, r.SchoolCount, r.Students,
+                r.DcPass, r.DcGood, r.DcExcellent, r.RcPass, r.RcGood, r.RcExcellent))
+            .ToList();
+        return Ok(new GuestQrSummaryDto(year.Value, grades));
+    }
+
+    /// <summary>QR per-school counts for one grade, ranked by ดีขึ้นไป (%) of คุณลักษณะฯ.</summary>
+    [HttpGet("qr/schools/{grade}")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestQrSchoolsDto>> GetQrSchools(string grade, CancellationToken ct)
+    {
+        var g = grade.ToUpperInvariant();
+        if (!QrGrades.Contains(g))
+            return NotFound(new { message = $"unknown grade '{grade}' — expected P1..P6|M1..M6" });
+
+        var year = await LatestYearOfAsync("qr", ct);
+        if (year is null) return Ok(new GuestQrSchoolsDto(0, g, []));
+
+        var rows = await _context.Database.SqlQuery<QrSchoolRow>($"""
+            SELECT r."SmisCode" AS "SmisCode", s."NameTh" AS "SchoolName",
+                   r."TotalStudents" AS "TotalStudents",
+                   r."DcPass" AS "DcPass", r."DcGood" AS "DcGood", r."DcExcellent" AS "DcExcellent",
+                   r."RcPass" AS "RcPass", r."RcGood" AS "RcGood", r."RcExcellent" AS "RcExcellent"
+            FROM "QrSchoolResults" r
+            JOIN "Schools" s ON s."SmisCode" = r."SmisCode" AND s."DeletedAt" IS NULL
+            WHERE r."EducationYear" = {year} AND r."GradeLevel" = {g}
+            """).ToListAsync(ct);
+
+        return Ok(new GuestQrSchoolsDto(year.Value, g, rows
+            .OrderByDescending(r => r.TotalStudents > 0
+                ? (decimal)((r.DcGood ?? 0) + (r.DcExcellent ?? 0)) / r.TotalStudents!.Value : -1)
+            .ToList()));
+    }
+
+    // ═══════════════════════ Plan #102 — Overview + School ══════════════════
+
+    /// <summary>
+    /// Academic overview: per-year headline series for every test type plus a
+    /// per-school comparison table (latest year) powering the search grid.
+    /// </summary>
+    [HttpGet("overview")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestAcademicOverviewDto>> GetOverview(CancellationToken ct)
+    {
+        var onetYears = await _context.Database.SqlQuery<OnetYearGradeRow>($"""
+            SELECT "EducationYear" AS "Year", "GradeLevel" AS "Grade",
+                   COUNT(DISTINCT "SmisCode")::int AS "SchoolCount",
+                   MAX("TestTakers")::int AS "TestTakers",
+                   ROUND(SUM("MeanScore" * "TestTakers") / NULLIF(SUM("TestTakers"), 0), 2) AS "Mean"
+            FROM "OnetSchoolResults" GROUP BY 1, 2 ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var ntYears = await _context.Database.SqlQuery<SimpleYearAggRow>($"""
+            SELECT "EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
+                   ROUND(AVG("MathScore"), 2) AS "V1", ROUND(AVG("ThaiScore"), 2) AS "V2", ROUND(AVG("TotalScore"), 2) AS "V3"
+            FROM "NtSchoolResults" GROUP BY 1 ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var rtYears = await _context.Database.SqlQuery<SimpleYearAggRow>($"""
+            SELECT "EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
+                   ROUND(AVG("ReadAloudPct"), 2) AS "V1", ROUND(AVG("ReadCompPct"), 2) AS "V2", ROUND(AVG("TotalPct"), 2) AS "V3"
+            FROM "RtSchoolResults" GROUP BY 1 ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var qrYears = await _context.Database.SqlQuery<QrYearAggRow>($"""
+            SELECT "EducationYear" AS "Year",
+                   COUNT(DISTINCT "SmisCode")::int AS "SchoolCount",
+                   COALESCE(SUM("TotalStudents"),0)::int AS "Students",
+                   COALESCE(SUM("DcGood") + SUM("DcExcellent"),0)::int AS "DcGoodUp",
+                   COALESCE(SUM("RcGood") + SUM("RcExcellent"),0)::int AS "RcGoodUp"
+            FROM "QrSchoolResults" GROUP BY 1 ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var schoolRows = await _context.Database.SqlQuery<OverviewSchoolRow>($"""
+            SELECT s."SmisCode" AS "SmisCode", s."NameTh" AS "SchoolName",
+                   o."OnetMean" AS "OnetMean", n."TotalScore" AS "NtTotal", r."TotalPct" AS "RtTotal",
+                   q."DcGoodUpPct" AS "QrGoodUpPct"
+            FROM "Schools" s
+            LEFT JOIN (SELECT "SmisCode", ROUND(AVG("MeanScore"), 2) AS "OnetMean"
+                       FROM "OnetSchoolResults" WHERE "EducationYear" = (SELECT MAX("EducationYear") FROM "OnetSchoolResults")
+                       GROUP BY 1) o ON o."SmisCode" = s."SmisCode"
+            LEFT JOIN (SELECT "SmisCode", "TotalScore" FROM "NtSchoolResults"
+                       WHERE "EducationYear" = (SELECT MAX("EducationYear") FROM "NtSchoolResults")) n ON n."SmisCode" = s."SmisCode"
+            LEFT JOIN (SELECT "SmisCode", "TotalPct" FROM "RtSchoolResults"
+                       WHERE "EducationYear" = (SELECT MAX("EducationYear") FROM "RtSchoolResults")) r ON r."SmisCode" = s."SmisCode"
+            LEFT JOIN (SELECT "SmisCode",
+                              ROUND(100.0 * (SUM("DcGood") + SUM("DcExcellent")) / NULLIF(SUM("TotalStudents"), 0), 2) AS "DcGoodUpPct"
+                       FROM "QrSchoolResults" WHERE "EducationYear" = (SELECT MAX("EducationYear") FROM "QrSchoolResults")
+                       GROUP BY 1) q ON q."SmisCode" = s."SmisCode"
+            WHERE s."DeletedAt" IS NULL AND s."IsActive"
+            ORDER BY s."NameTh"
+            """).ToListAsync(ct);
+
+        return Ok(new GuestAcademicOverviewDto(
+            onetYears.GroupBy(r => r.Year)
+                .OrderByDescending(g => g.Key)
+                .Select(g => new GuestOnetYearDto(g.Key, g.Select(r =>
+                    new GuestOnetYearGradeDto(r.Grade, r.SchoolCount, r.TestTakers, r.Mean)).ToList()))
+                .ToList(),
+            ntYears.Select(r => new GuestSimpleYearDto(r.Year, r.SchoolCount, r.V1, r.V2, r.V3)).ToList(),
+            rtYears.Select(r => new GuestSimpleYearDto(r.Year, r.SchoolCount, r.V1, r.V2, r.V3)).ToList(),
+            qrYears.Select(r => new GuestQrYearDto(r.Year, r.SchoolCount, r.Students,
+                r.Students > 0 ? Math.Round(100m * r.DcGoodUp / r.Students, 2) : null,
+                r.Students > 0 ? Math.Round(100m * r.RcGoodUp / r.Students, 2) : null)).ToList(),
+            schoolRows));
+    }
+
+    /// <summary>Everything we know about one school across all tests and years.</summary>
+    [HttpGet("school/{smisCode}")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestSchoolAcademicDto>> GetSchoolDetail(string smisCode, CancellationToken ct)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(smisCode, @"^\d{8}$"))
+            return NotFound(new { message = "invalid smisCode" });
+
+        var school = await _context.Database.SqlQuery<SchoolHeadRow>($"""
+            SELECT "SmisCode" AS "SmisCode", "NameTh" AS "SchoolName"
+            FROM "Schools" WHERE "SmisCode" = {smisCode} AND "DeletedAt" IS NULL
+            """).FirstOrDefaultAsync(ct);
+        if (school is null) return NotFound(new { message = "school not found" });
+
+        var onet = await _context.Database.SqlQuery<SchoolOnetRow>($"""
+            SELECT "EducationYear" AS "Year", "GradeLevel" AS "Grade", "Subject" AS "Subject",
+                   "TestTakers" AS "TestTakers", "MeanScore" AS "MeanScore"
+            FROM "OnetSchoolResults" WHERE "SmisCode" = {smisCode} ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var nt = await _context.Database.SqlQuery<SchoolNtRow>($"""
+            SELECT "EducationYear" AS "Year", "MathScore" AS "MathScore", "MathLevel" AS "MathLevel",
+                   "ThaiScore" AS "ThaiScore", "ThaiLevel" AS "ThaiLevel",
+                   "TotalScore" AS "TotalScore", "TotalLevel" AS "TotalLevel"
+            FROM "NtSchoolResults" WHERE "SmisCode" = {smisCode} ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var rt = await _context.Database.SqlQuery<SchoolRtRow>($"""
+            SELECT "EducationYear" AS "Year", "ReadAloudPct" AS "ReadAloudPct", "ReadAloudLevel" AS "ReadAloudLevel",
+                   "ReadCompPct" AS "ReadCompPct", "ReadCompLevel" AS "ReadCompLevel",
+                   "TotalPct" AS "TotalPct", "TotalLevel" AS "TotalLevel"
+            FROM "RtSchoolResults" WHERE "SmisCode" = {smisCode} ORDER BY 1 DESC
+            """).ToListAsync(ct);
+
+        var qr = await _context.Database.SqlQuery<SchoolQrRow>($"""
+            SELECT "EducationYear" AS "Year", "GradeLevel" AS "Grade", "TotalStudents" AS "TotalStudents",
+                   "DcPass" AS "DcPass", "DcGood" AS "DcGood", "DcExcellent" AS "DcExcellent",
+                   "RcPass" AS "RcPass", "RcGood" AS "RcGood", "RcExcellent" AS "RcExcellent"
+            FROM "QrSchoolResults" WHERE "SmisCode" = {smisCode} ORDER BY 1 DESC, 2
+            """).ToListAsync(ct);
+
+        return Ok(new GuestSchoolAcademicDto(school.SmisCode, school.SchoolName, onet, nt, rt,
+            qr.OrderByDescending(r => r.Year).ThenBy(r => Array.IndexOf(QrGrades, r.Grade)).ToList()));
+    }
+
+    private static decimal? Avg(IEnumerable<decimal?> values)
+    {
+        var xs = values.Where(v => v.HasValue).Select(v => v!.Value).ToList();
+        return xs.Count == 0 ? null : Math.Round(xs.Average(), 2);
+    }
+
     private static int SubjectOrder(string subject) => subject switch
     {
         "thai" => 1,
@@ -195,3 +494,190 @@ public record GuestOnetSchoolDto(
     List<GuestOnetSchoolSubjectDto> Subjects);
 
 public record GuestOnetSchoolSubjectDto(string Subject, int TestTakers, decimal MeanScore);
+
+// ── Plan #102 — NT/RT/QR/overview/school row shapes + DTOs ───────────────────
+
+public class NtRow
+{
+    public string SmisCode { get; set; } = "";
+    public string SchoolName { get; set; } = "";
+    public string? SchoolSize { get; set; }
+    public decimal? MathScore { get; set; }
+    public string? MathLevel { get; set; }
+    public decimal? ThaiScore { get; set; }
+    public string? ThaiLevel { get; set; }
+    public decimal? TotalScore { get; set; }
+    public string? TotalLevel { get; set; }
+}
+
+public class RtRow
+{
+    public string SmisCode { get; set; } = "";
+    public string SchoolName { get; set; } = "";
+    public string? SchoolSize { get; set; }
+    public decimal? ReadAloudScore { get; set; }
+    public decimal? ReadAloudPct { get; set; }
+    public string? ReadAloudLevel { get; set; }
+    public decimal? ReadCompScore { get; set; }
+    public decimal? ReadCompPct { get; set; }
+    public string? ReadCompLevel { get; set; }
+    public decimal? TotalPct { get; set; }
+    public string? TotalLevel { get; set; }
+}
+
+internal sealed class QrAggRow
+{
+    public string Grade { get; set; } = "";
+    public int SchoolCount { get; set; }
+    public int Students { get; set; }
+    public int DcPass { get; set; }
+    public int DcGood { get; set; }
+    public int DcExcellent { get; set; }
+    public int RcPass { get; set; }
+    public int RcGood { get; set; }
+    public int RcExcellent { get; set; }
+}
+
+public class QrSchoolRow
+{
+    public string SmisCode { get; set; } = "";
+    public string SchoolName { get; set; } = "";
+    public int? TotalStudents { get; set; }
+    public int? DcPass { get; set; }
+    public int? DcGood { get; set; }
+    public int? DcExcellent { get; set; }
+    public int? RcPass { get; set; }
+    public int? RcGood { get; set; }
+    public int? RcExcellent { get; set; }
+}
+
+internal sealed class OnetYearGradeRow
+{
+    public int Year { get; set; }
+    public string Grade { get; set; } = "";
+    public int SchoolCount { get; set; }
+    public int TestTakers { get; set; }
+    public decimal? Mean { get; set; }
+}
+
+internal sealed class SimpleYearAggRow
+{
+    public int Year { get; set; }
+    public int SchoolCount { get; set; }
+    public decimal? V1 { get; set; }
+    public decimal? V2 { get; set; }
+    public decimal? V3 { get; set; }
+}
+
+internal sealed class QrYearAggRow
+{
+    public int Year { get; set; }
+    public int SchoolCount { get; set; }
+    public int Students { get; set; }
+    public int DcGoodUp { get; set; }
+    public int RcGoodUp { get; set; }
+}
+
+public class OverviewSchoolRow
+{
+    public string SmisCode { get; set; } = "";
+    public string SchoolName { get; set; } = "";
+    public decimal? OnetMean { get; set; }
+    public decimal? NtTotal { get; set; }
+    public decimal? RtTotal { get; set; }
+    public decimal? QrGoodUpPct { get; set; }
+}
+
+internal sealed class SchoolHeadRow
+{
+    public string SmisCode { get; set; } = "";
+    public string SchoolName { get; set; } = "";
+}
+
+public class SchoolOnetRow
+{
+    public int Year { get; set; }
+    public string Grade { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public int TestTakers { get; set; }
+    public decimal MeanScore { get; set; }
+}
+
+public class SchoolNtRow
+{
+    public int Year { get; set; }
+    public decimal? MathScore { get; set; }
+    public string? MathLevel { get; set; }
+    public decimal? ThaiScore { get; set; }
+    public string? ThaiLevel { get; set; }
+    public decimal? TotalScore { get; set; }
+    public string? TotalLevel { get; set; }
+}
+
+public class SchoolRtRow
+{
+    public int Year { get; set; }
+    public decimal? ReadAloudPct { get; set; }
+    public string? ReadAloudLevel { get; set; }
+    public decimal? ReadCompPct { get; set; }
+    public string? ReadCompLevel { get; set; }
+    public decimal? TotalPct { get; set; }
+    public string? TotalLevel { get; set; }
+}
+
+public class SchoolQrRow
+{
+    public int Year { get; set; }
+    public string Grade { get; set; } = "";
+    public int? TotalStudents { get; set; }
+    public int? DcPass { get; set; }
+    public int? DcGood { get; set; }
+    public int? DcExcellent { get; set; }
+    public int? RcPass { get; set; }
+    public int? RcGood { get; set; }
+    public int? RcExcellent { get; set; }
+}
+
+public record GuestLevelCountDto(string Level, int Count);
+
+public record GuestNtSummaryDto(
+    int Year, int SchoolCount,
+    decimal? AvgMath, decimal? AvgThai, decimal? AvgTotal,
+    List<GuestLevelCountDto> MathLevels, List<GuestLevelCountDto> ThaiLevels, List<GuestLevelCountDto> TotalLevels);
+
+public record GuestNtSchoolsDto(int Year, List<NtRow> Schools);
+
+public record GuestRtSummaryDto(
+    int Year, int SchoolCount,
+    decimal? AvgReadAloud, decimal? AvgReadComp, decimal? AvgTotal,
+    List<GuestLevelCountDto> ReadAloudLevels, List<GuestLevelCountDto> ReadCompLevels, List<GuestLevelCountDto> TotalLevels);
+
+public record GuestRtSchoolsDto(int Year, List<RtRow> Schools);
+
+public record GuestQrGradeDto(
+    string Grade, int SchoolCount, int Students,
+    int DcPass, int DcGood, int DcExcellent,
+    int RcPass, int RcGood, int RcExcellent);
+
+public record GuestQrSummaryDto(int Year, List<GuestQrGradeDto> Grades);
+
+public record GuestQrSchoolsDto(int Year, string Grade, List<QrSchoolRow> Schools);
+
+public record GuestOnetYearGradeDto(string Grade, int SchoolCount, int TestTakers, decimal? Mean);
+
+public record GuestOnetYearDto(int Year, List<GuestOnetYearGradeDto> Grades);
+
+public record GuestSimpleYearDto(int Year, int SchoolCount, decimal? V1, decimal? V2, decimal? V3);
+
+public record GuestQrYearDto(int Year, int SchoolCount, int Students, decimal? DcGoodUpPct, decimal? RcGoodUpPct);
+
+public record GuestAcademicOverviewDto(
+    List<GuestOnetYearDto> Onet,
+    List<GuestSimpleYearDto> Nt,
+    List<GuestSimpleYearDto> Rt,
+    List<GuestQrYearDto> Qr,
+    List<OverviewSchoolRow> Schools);
+
+public record GuestSchoolAcademicDto(
+    string SmisCode, string SchoolName,
+    List<SchoolOnetRow> Onet, List<SchoolNtRow> Nt, List<SchoolRtRow> Rt, List<SchoolQrRow> Qr);
