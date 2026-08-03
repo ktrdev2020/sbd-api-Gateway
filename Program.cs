@@ -1220,6 +1220,36 @@ using (var scope = app.Services.CreateScope())
           ON CONFLICT (""CacheKeyPattern"", ""DbIndex"") DO NOTHING");
     Console.WriteLine("[Seed] CacheDefinitions table ensured.");
 
+    // ── Plan #101 — O-NET school-level results (ผลรายโรง แยกรายวิชา, NIETS) ────
+    // Populated by tools/import-onet.mjs (main repo) once per education year.
+    // SmisCode joins Schools."SmisCode" (NIETS school code = '10' + SMIS 8 digits).
+    // MeanObjective/MeanSubjective are Thai-subject-only (ปรนัย/อัตนัย breakdown).
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS ""OnetSchoolResults"" (
+            ""Id""             BIGSERIAL PRIMARY KEY,
+            ""EducationYear""  INT  NOT NULL,
+            ""GradeLevel""     TEXT NOT NULL,
+            ""Subject""        TEXT NOT NULL,
+            ""SmisCode""       TEXT NOT NULL,
+            ""TestTakers""     INT  NOT NULL,
+            ""MeanScore""      NUMERIC(6,2) NOT NULL,
+            ""StdDev""         NUMERIC(6,2),
+            ""MaxScore""       NUMERIC(6,2),
+            ""MinScore""       NUMERIC(6,2),
+            ""MedianScore""    NUMERIC(6,2),
+            ""ModeScore""      NUMERIC(6,2),
+            ""CountAboveHalf"" INT,
+            ""MeanObjective""  NUMERIC(6,2),
+            ""MeanSubjective"" NUMERIC(6,2),
+            ""CreatedAt""      TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ""IX_OnetSchoolResults_Key""
+            ON ""OnetSchoolResults"" (""EducationYear"",""GradeLevel"",""Subject"",""SmisCode"");
+        CREATE INDEX IF NOT EXISTS ""IX_OnetSchoolResults_Smis""
+            ON ""OnetSchoolResults"" (""SmisCode"");
+    ");
+    Console.WriteLine("[Seed] Plan #101 — OnetSchoolResults table ensured.");
+
     // ── MenuItems — DB-backed sidebar menu per role (incl. public Guest menu) ──
     await db.Database.ExecuteSqlRawAsync(@"
         CREATE TABLE IF NOT EXISTS ""MenuItems"" (
