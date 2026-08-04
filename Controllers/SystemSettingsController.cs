@@ -28,12 +28,16 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
     {
         ["currentAcademicYear"] = 2569,
         ["currentTerm"] = 1,
-        ["feedbackEnabled"] = true,     // Plan #103 — Feedback FAB visibility
+        ["feedbackEnabled"] = true,     // Plan #103 — Feedback FAB visibility (logged-in users)
         ["promotionLocked"] = true,     // Plan #104 — block bulk-promote after the authoritative DMC import
+        // Plan #108 — anonymous feedback from public/guest pages. Default OFF:
+        // opened only around events (e.g. training days), so a lost Redis key
+        // must fail closed, never leave the public gate open by accident.
+        ["publicFeedbackEnabled"] = false,
     };
 
-    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm, bool FeedbackEnabled, bool PromotionLocked);
-    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm, bool? FeedbackEnabled, bool? PromotionLocked);
+    public record SystemSettingsDto(int CurrentAcademicYear, int CurrentTerm, bool FeedbackEnabled, bool PromotionLocked, bool PublicFeedbackEnabled);
+    public record UpdateSystemSettingsRequest(int? CurrentAcademicYear, int? CurrentTerm, bool? FeedbackEnabled, bool? PromotionLocked, bool? PublicFeedbackEnabled);
 
     /// <summary>Public read — anyone with a valid client can fetch.</summary>
     [HttpGet("system-settings")]
@@ -45,7 +49,8 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
             CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
             FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"]),
-            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"])
+            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"]),
+            PublicFeedbackEnabled: GetBool(stored, "publicFeedbackEnabled", (bool)Defaults["publicFeedbackEnabled"])
         ));
     }
 
@@ -77,6 +82,10 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
         {
             stored["promotionLocked"] = promotionLocked;
         }
+        if (req.PublicFeedbackEnabled is bool publicFeedbackEnabled)
+        {
+            stored["publicFeedbackEnabled"] = publicFeedbackEnabled;
+        }
 
         await cache.SetAsync(CacheKey, stored, TimeSpan.FromDays(3650));
         logger.LogInformation("System settings updated by {User}: AY={AY} Term={Term} Feedback={Feedback}",
@@ -87,7 +96,8 @@ public class SystemSettingsController(ICacheService cache, ILogger<SystemSetting
             CurrentAcademicYear: GetInt(stored, "currentAcademicYear", (int)Defaults["currentAcademicYear"]),
             CurrentTerm: GetInt(stored, "currentTerm", (int)Defaults["currentTerm"]),
             FeedbackEnabled: GetBool(stored, "feedbackEnabled", (bool)Defaults["feedbackEnabled"]),
-            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"])
+            PromotionLocked: GetBool(stored, "promotionLocked", (bool)Defaults["promotionLocked"]),
+            PublicFeedbackEnabled: GetBool(stored, "publicFeedbackEnabled", (bool)Defaults["publicFeedbackEnabled"])
         ));
     }
 

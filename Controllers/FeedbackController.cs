@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Gateway.Data;
 using Gateway.Models;
+using Gateway.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,11 @@ namespace Gateway.Controllers;
 /// scope (user id, role, school_code, area_id) are taken from JWT claims —
 /// never from the request body — so reports can't be spoofed per role.
 /// Admin triage/report lives in Admin/AdminFeedbackController.
+///
+/// Plan #108 — Submit also accepts anonymous callers (role recorded as
+/// "public") while the SuperAdmin-managed `publicFeedbackEnabled` setting is
+/// on. Anonymous traffic is rate-limited per client IP; the limiter is
+/// best-effort (fails open when Redis is down, per the resilience pattern).
 /// </summary>
 [ApiController]
 [Route("api/v1/feedback")]
@@ -23,12 +29,18 @@ public class FeedbackController : ControllerBase
     private static readonly HashSet<string> AllowedCategories =
         new(StringComparer.OrdinalIgnoreCase) { "bug", "improvement", "feature", "data", "other" };
 
+    private const string SettingsCacheKey = "system:settings:v1";
+    private const int AnonymousWindowMinutes = 10;
+    private const int AnonymousMaxPerWindow = 5;
+
     private readonly GatewayDbContext _db;
+    private readonly ICacheService _cache;
     private readonly ILogger<FeedbackController> _logger;
 
-    public FeedbackController(SbdDbContext db, ILogger<FeedbackController> logger)
+    public FeedbackController(SbdDbContext db, ICacheService cache, ILogger<FeedbackController> logger)
     {
         _db = (GatewayDbContext)db;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -42,6 +54,7 @@ public class FeedbackController : ControllerBase
         string? DisplayName);
 
     [HttpPost]
+    [AllowAnonymous]
     public async Task<IActionResult> Submit([FromBody] SubmitFeedbackRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Url) || req.Url.Length > 500)
@@ -54,9 +67,20 @@ public class FeedbackController : ControllerBase
         if (message.Length > 4000)
             return BadRequest(new { message = "รายละเอียดยาวเกิน 4000 ตัวอักษร" });
 
+        var isAuthenticated = User.Identity?.IsAuthenticated == true;
+        if (!isAuthenticated)
+        {
+            if (!await IsPublicFeedbackEnabledAsync())
+                return StatusCode(403, new { message = "ขณะนี้ยังไม่เปิดรับข้อเสนอแนะจากบุคคลทั่วไป" });
+            if (!await TryConsumeAnonymousQuotaAsync())
+                return StatusCode(429, new { message = "ส่งข้อเสนอแนะถี่เกินไป กรุณารอสักครู่แล้วลองใหม่" });
+        }
+
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         int? userId = int.TryParse(userIdStr, out var parsed) ? parsed : null;
-        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value ?? "unknown";
+        var role = isAuthenticated
+            ? User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value ?? "unknown"
+            : "public";
         var schoolCode = User.FindFirst("school_code")?.Value ?? User.FindFirst("school_id")?.Value;
         var areaId = User.FindFirst("area_id")?.Value;
 
@@ -108,5 +132,49 @@ public class FeedbackController : ControllerBase
         if (string.IsNullOrWhiteSpace(value)) return null;
         var v = value.Trim();
         return v.Length <= max ? v : v[..max];
+    }
+
+    /// <summary>
+    /// Reads the Plan #108 toggle from the same Redis hash SystemSettingsController
+    /// owns. Missing key or Redis outage both yield false — the public gate must
+    /// fail closed (it is opened deliberately around events, never by accident).
+    /// </summary>
+    private async Task<bool> IsPublicFeedbackEnabledAsync()
+    {
+        var stored = await _cache.GetAsync<Dictionary<string, object>>(SettingsCacheKey);
+        if (stored is null || !stored.TryGetValue("publicFeedbackEnabled", out var raw) || raw is null)
+            return false;
+        return raw switch
+        {
+            bool b => b,
+            string s when bool.TryParse(s, out var parsed) => parsed,
+            System.Text.Json.JsonElement je when je.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False => je.GetBoolean(),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Fixed-window per-IP limiter for anonymous submissions. Redis outage makes
+    /// GetAsync return default and SetAsync a no-op, so the limiter fails open —
+    /// a spam window during an outage beats blocking legitimate reports.
+    /// </summary>
+    private async Task<bool> TryConsumeAnonymousQuotaAsync()
+    {
+        var forwarded = Request.Headers["X-Forwarded-For"].ToString();
+        var ip = !string.IsNullOrWhiteSpace(forwarded)
+            ? forwarded.Split(',')[0].Trim()
+            : HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / (AnonymousWindowMinutes * 60);
+        var key = $"feedback:rl:{ip}:{bucket}";
+
+        var count = await _cache.GetAsync<int>(key);
+        if (count >= AnonymousMaxPerWindow)
+        {
+            _logger.LogWarning("Anonymous feedback rate-limited for {Ip}", ip);
+            return false;
+        }
+        await _cache.SetAsync(key, count + 1, TimeSpan.FromMinutes(AnonymousWindowMinutes));
+        return true;
     }
 }
