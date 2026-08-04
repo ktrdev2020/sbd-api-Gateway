@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Infrastructure.Data;
+using StackExchange.Redis;
 
 namespace Gateway.Controllers;
 
@@ -38,12 +39,18 @@ public class FeedbackController : ControllerBase
 
     private readonly GatewayDbContext _db;
     private readonly ICacheService _cache;
+    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<FeedbackController> _logger;
 
-    public FeedbackController(SbdDbContext db, ICacheService cache, ILogger<FeedbackController> logger)
+    public FeedbackController(
+        SbdDbContext db,
+        ICacheService cache,
+        IConnectionMultiplexer redis,
+        ILogger<FeedbackController> logger)
     {
         _db = (GatewayDbContext)db;
         _cache = cache;
+        _redis = redis;
         _logger = logger;
     }
 
@@ -158,9 +165,10 @@ public class FeedbackController : ControllerBase
     }
 
     /// <summary>
-    /// Fixed-window per-IP limiter for anonymous submissions. Redis outage makes
-    /// GetAsync return default and SetAsync a no-op, so the limiter fails open —
-    /// a spam window during an outage beats blocking legitimate reports.
+    /// Fixed-window per-IP limiter for anonymous submissions, using an atomic
+    /// INCR (the ICacheService get-then-set pattern raced and never tripped in
+    /// production — verified 2026-08-04). Redis outage → fail open, because a
+    /// spam window during an outage beats blocking legitimate reports.
     /// </summary>
     private async Task<bool> TryConsumeAnonymousQuotaAsync()
     {
@@ -171,14 +179,25 @@ public class FeedbackController : ControllerBase
 
         var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / (AnonymousWindowMinutes * 60);
         var key = $"feedback:rl:{ip}:{bucket}";
+        var window = TimeSpan.FromMinutes(AnonymousWindowMinutes);
 
-        var count = await _cache.GetAsync<int>(key);
-        if (count >= AnonymousMaxPerWindow)
+        try
         {
-            _logger.LogWarning("Anonymous feedback rate-limited for {Ip}", ip);
-            return false;
+            if (!_redis.IsConnected) return true;
+            var db = _redis.GetDatabase();
+            var count = await db.StringIncrementAsync(key);
+            if (count == 1) await db.KeyExpireAsync(key, window);
+            if (count > AnonymousMaxPerWindow)
+            {
+                _logger.LogWarning("Anonymous feedback rate-limited for {Ip} ({Count} in window)", ip, count);
+                return false;
+            }
+            return true;
         }
-        await _cache.SetAsync(key, count + 1, TimeSpan.FromMinutes(AnonymousWindowMinutes));
-        return true;
+        catch (Exception ex) when (ex is RedisException or TimeoutException)
+        {
+            _logger.LogWarning(ex, "Anonymous feedback rate limiter degraded (Redis unavailable)");
+            return true;
+        }
     }
 }
