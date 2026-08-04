@@ -26,8 +26,11 @@ namespace Gateway.Controllers;
 [Authorize]
 public class FeedbackController : ControllerBase
 {
+    // "account" = ขอความช่วยเหลือบัญชี (Plan #109) — the login page's
+    // contact-admin form. Anonymous by nature, so it bypasses the
+    // publicFeedbackEnabled event-window gate (but not the rate limiter).
     private static readonly HashSet<string> AllowedCategories =
-        new(StringComparer.OrdinalIgnoreCase) { "bug", "improvement", "feature", "data", "other" };
+        new(StringComparer.OrdinalIgnoreCase) { "bug", "improvement", "feature", "data", "other", "account" };
 
     private const string SettingsCacheKey = "system:settings:v1";
     private const int AnonymousWindowMinutes = 10;
@@ -60,7 +63,7 @@ public class FeedbackController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Url) || req.Url.Length > 500)
             return BadRequest(new { message = "url ไม่ถูกต้อง" });
         if (!AllowedCategories.Contains(req.Category ?? string.Empty))
-            return BadRequest(new { message = "category ต้องเป็น bug/improvement/feature/data/other" });
+            return BadRequest(new { message = "category ต้องเป็น bug/improvement/feature/data/other/account" });
         var message = (req.Message ?? string.Empty).Trim();
         if (message.Length < 5)
             return BadRequest(new { message = "กรุณาระบุรายละเอียดอย่างน้อย 5 ตัวอักษร" });
@@ -68,9 +71,10 @@ public class FeedbackController : ControllerBase
             return BadRequest(new { message = "รายละเอียดยาวเกิน 4000 ตัวอักษร" });
 
         var isAuthenticated = User.Identity?.IsAuthenticated == true;
+        var isAccountHelp = string.Equals(req.Category, "account", StringComparison.OrdinalIgnoreCase);
         if (!isAuthenticated)
         {
-            if (!await IsPublicFeedbackEnabledAsync())
+            if (!isAccountHelp && !await IsPublicFeedbackEnabledAsync())
                 return StatusCode(403, new { message = "ขณะนี้ยังไม่เปิดรับข้อเสนอแนะจากบุคคลทั่วไป" });
             if (!await TryConsumeAnonymousQuotaAsync())
                 return StatusCode(429, new { message = "ส่งข้อเสนอแนะถี่เกินไป กรุณารอสักครู่แล้วลองใหม่" });
