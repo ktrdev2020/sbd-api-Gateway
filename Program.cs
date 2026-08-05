@@ -248,6 +248,13 @@ using (var scope = app.Services.CreateScope())
         -- School: FileService logo cache (denormalized — kept in sync via SchoolLogoUpdatedConsumer)
         ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LogoThumbnailUrl"" VARCHAR(1000) NULL;
         ALTER TABLE ""Schools"" ADD COLUMN IF NOT EXISTS ""LogoVersion"" INTEGER NOT NULL DEFAULT 0;
+        -- Area: office coordinates (Plan #114 / feedback id=39) so the public map can
+        -- show how far each school is from the district office. Kept as data, not a
+        -- constant in code, so it can be corrected without a deploy.
+        ALTER TABLE ""Areas"" ADD COLUMN IF NOT EXISTS ""Latitude"" DOUBLE PRECISION NULL;
+        ALTER TABLE ""Areas"" ADD COLUMN IF NOT EXISTS ""Longitude"" DOUBLE PRECISION NULL;
+        UPDATE ""Areas"" SET ""Latitude"" = 14.6929508, ""Longitude"" = 104.2002493
+        WHERE ""Code"" = 'ssk3' AND ""Latitude"" IS NULL;
         -- Module: shadow property columns
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""VisibilityLevels"" VARCHAR(200) NOT NULL DEFAULT 'school';
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""RegistrationType"" VARCHAR(50) NOT NULL DEFAULT 'internal';

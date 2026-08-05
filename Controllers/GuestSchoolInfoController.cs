@@ -330,6 +330,25 @@ public class GuestSchoolInfoController : ControllerBase
         return Ok(rows);
     }
 
+    /// <summary>
+    /// Plan #114 (feedback id=39) — where the district office is, so the map can
+    /// show the distance to each school. Separate from /map so the existing
+    /// payload shape stays untouched during a rollout.
+    /// </summary>
+    [HttpGet("map/origin")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestMapOriginDto>> GetMapOrigin(CancellationToken ct)
+    {
+        var row = await _context.Database.SqlQuery<GuestMapOriginDto>($"""
+            SELECT "NameTh" AS "Name", "Latitude" AS "Lat", "Longitude" AS "Lng"
+            FROM "Areas" WHERE "Id" = {AreaId}
+            """).FirstOrDefaultAsync(ct);
+
+        // No coordinates recorded yet → say so rather than inventing a point.
+        if (row is null || row.Lat is null || row.Lng is null) return NoContent();
+        return Ok(row);
+    }
+
     private static string SlugFromDistrict(string name) => name switch
     {
         "ขุขันธ์"   => "khukhan",
@@ -435,4 +454,12 @@ public class GuestSchoolMapDto
     public string? District { get; set; }
     /// <summary>Plan #112 id=39 — shown in the map hover card when the school has one.</summary>
     public string? LogoUrl { get; set; }
+}
+
+/// <summary>Plan #114 — the district office, as the origin for map distances.</summary>
+public class GuestMapOriginDto
+{
+    public string Name { get; set; } = "";
+    public double? Lat { get; set; }
+    public double? Lng { get; set; }
 }
