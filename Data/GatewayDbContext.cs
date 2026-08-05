@@ -302,6 +302,11 @@ public class GatewayDbContext : SbdDbContext
             entity.Property(e => e.Viewport).HasColumnName("viewport").HasMaxLength(50);
             entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("new");
             entity.Property(e => e.AdminNote).HasColumnName("admin_note");
+            // Plan #111 A3 — reporter-visible reply
+            entity.Property(e => e.AdminReply).HasColumnName("admin_reply");
+            entity.Property(e => e.RepliedAt).HasColumnName("replied_at");
+            entity.Property(e => e.RepliedByUserId).HasColumnName("replied_by_user_id");
+            entity.Property(e => e.ResolvedVersion).HasColumnName("resolved_version").HasMaxLength(40);
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
             entity.HasIndex(e => e.ModuleCode).HasDatabaseName("ix_feedback_entries_module");

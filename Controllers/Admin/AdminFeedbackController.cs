@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Claims;
 using Gateway.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -112,7 +113,14 @@ public class AdminFeedbackController : ControllerBase
         return Ok(new { total, newCount, last7d, byModule, byCategory, byStatus, byRole, topUrls });
     }
 
-    public record UpdateStatusRequest(string Status, string? AdminNote);
+    /// <param name="AdminNote">Internal triage note — not shown to the reporter.</param>
+    /// <param name="AdminReply">Message the reporter reads. Recorded with a timestamp and author.</param>
+    /// <param name="ResolvedVersion">Release the fix shipped in, e.g. "v1.0.0".</param>
+    public record UpdateStatusRequest(
+        string Status,
+        string? AdminNote,
+        string? AdminReply = null,
+        string? ResolvedVersion = null);
 
     [HttpPut("{id:long}/status")]
     public async Task<IActionResult> UpdateStatus(long id, [FromBody] UpdateStatusRequest req)
@@ -128,11 +136,34 @@ public class AdminFeedbackController : ControllerBase
 
         entry.Status = req.Status!.ToLowerInvariant();
         if (req.AdminNote is not null) entry.AdminNote = req.AdminNote.Trim();
+
+        // Plan #111 A3 — a reply is what closes the loop with the person who
+        // reported the problem. Stamp who wrote it and when, so the reporter
+        // sees an accountable answer rather than an anonymous status flip.
+        if (!string.IsNullOrWhiteSpace(req.AdminReply))
+        {
+            entry.AdminReply = req.AdminReply.Trim();
+            entry.RepliedAt = DateTimeOffset.UtcNow;
+            entry.RepliedByUserId = CurrentUserId();
+        }
+        if (!string.IsNullOrWhiteSpace(req.ResolvedVersion))
+            entry.ResolvedVersion = req.ResolvedVersion.Trim();
+
         entry.UpdatedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync();
 
-        _logger.LogInformation("Feedback #{Id} status → {Status} by {User}", id, entry.Status, User.Identity?.Name);
+        _logger.LogInformation(
+            "Feedback #{Id} status → {Status} by {User}{Reply}",
+            id, entry.Status, User.Identity?.Name,
+            entry.AdminReply is null ? "" : " (with reply)");
         return Ok(entry);
+    }
+
+    private int? CurrentUserId()
+    {
+        var raw = User.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier)
+                  ?? User.FindFirstValue("sub");
+        return int.TryParse(raw, out var id) ? id : null;
     }
 
     [HttpDelete("{id:long}")]
@@ -165,7 +196,9 @@ public class AdminFeedbackController : ControllerBase
         sb.AppendLine("# SBD User Feedback Report");
         sb.AppendLine();
         sb.AppendLine($"- Exported: {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm} UTC");
-        sb.AppendLine($"- Scope: status=[{status ?? "all"}] module=[{moduleCode ?? "all"}] role=[{role ?? "all"}] · {entries.Count} entries");
+        sb.AppendLine(
+            $"- Scope: status=[{status ?? "all"}] module=[{moduleCode ?? "all"}] " +
+            $"role=[{role ?? "all"}] category=[{category ?? "all"}] · {entries.Count} entries");
         sb.AppendLine();
         sb.AppendLine("> Each entry: what the user reported on which page, with their role tier.");
         sb.AppendLine("> Analyze per module, propose fixes, and reference the URL as the affected route.");

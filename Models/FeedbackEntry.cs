@@ -24,7 +24,17 @@ public class FeedbackEntry
     public string? UserAgent { get; set; }
     public string? Viewport { get; set; }
     public string Status { get; set; } = "new";     // new | acknowledged | resolved | dismissed
+    /// <summary>Internal triage note — never shown to the reporter.</summary>
     public string? AdminNote { get; set; }
+
+    // Plan #111 A3 — the reply the reporter actually sees. Kept separate from
+    // AdminNote so triage chatter can never leak to the user by accident.
+    public string? AdminReply { get; set; }
+    public DateTimeOffset? RepliedAt { get; set; }
+    public int? RepliedByUserId { get; set; }
+    /// <summary>Release the fix shipped in, e.g. "v1.0.0" — shown with the reply.</summary>
+    public string? ResolvedVersion { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

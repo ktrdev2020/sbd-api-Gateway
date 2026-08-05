@@ -1372,7 +1372,15 @@ using (var scope = app.Services.CreateScope())
         CREATE INDEX IF NOT EXISTS ix_feedback_entries_role    ON feedback_entries (role);
         CREATE INDEX IF NOT EXISTS ix_feedback_entries_created ON feedback_entries (created_at);
     ");
-    Console.WriteLine("[Seed] Plan #103 — feedback_entries table ensured.");
+    // Plan #111 A3 — reply visible to the reporter. admin_note stays internal;
+    // these columns are what the person who filed the report gets to read.
+    await db.Database.ExecuteSqlRawAsync(@"
+        ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS admin_reply        TEXT;
+        ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS replied_at         TIMESTAMPTZ;
+        ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS replied_by_user_id INT;
+        ALTER TABLE feedback_entries ADD COLUMN IF NOT EXISTS resolved_version   VARCHAR(40);
+    ");
+    Console.WriteLine("[Seed] Plan #103/#111 — feedback_entries table ensured (+reply columns).");
 
     // ── MenuItems — DB-backed sidebar menu per role (incl. public Guest menu) ──
     await db.Database.ExecuteSqlRawAsync(@"

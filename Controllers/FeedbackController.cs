@@ -133,7 +133,13 @@ public class FeedbackController : ControllerBase
             .Where(f => f.UserId == userId)
             .OrderByDescending(f => f.CreatedAt)
             .Take(20)
-            .Select(f => new { f.Id, f.Url, f.ModuleCode, f.Category, f.Message, f.Status, f.CreatedAt })
+            // Plan #111 A3 — include the reply so the reporter can see the answer.
+            // AdminNote is deliberately NOT selected: it is internal triage text.
+            .Select(f => new
+            {
+                f.Id, f.Url, f.ModuleCode, f.Category, f.Message, f.Status, f.CreatedAt,
+                f.AdminReply, f.RepliedAt, f.ResolvedVersion,
+            })
             .ToListAsync();
         return Ok(items);
     }
