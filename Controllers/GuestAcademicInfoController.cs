@@ -153,11 +153,16 @@ public class GuestAcademicInfoController : ControllerBase
             SELECT r."SmisCode"   AS "SmisCode",
                    s."NameTh"     AS "SchoolName",
                    r."SchoolSize" AS "SchoolSize",
+                   q."TotalStudents" AS "StudentCount",
                    r."MathScore"  AS "MathScore",  r."MathLevel"  AS "MathLevel",
                    r."ThaiScore"  AS "ThaiScore",  r."ThaiLevel"  AS "ThaiLevel",
                    r."TotalScore" AS "TotalScore", r."TotalLevel" AS "TotalLevel"
             FROM "NtSchoolResults" r
             JOIN "Schools" s ON s."SmisCode" = r."SmisCode" AND s."DeletedAt" IS NULL
+            LEFT JOIN "QrSchoolResults" q
+                   ON q."SmisCode" = r."SmisCode"
+                  AND q."EducationYear" = r."EducationYear"
+                  AND q."GradeLevel" = 'P3'
             WHERE r."EducationYear" = {year}
             """).ToListAsync(ct);
 
@@ -179,7 +184,9 @@ public class GuestAcademicInfoController : ControllerBase
 
         return Ok(new GuestNtSummaryDto(
             year.Value, rows.Count,
-            Avg(rows.Select(r => r.MathScore)), Avg(rows.Select(r => r.ThaiScore)), Avg(rows.Select(r => r.TotalScore)),
+            WeightedAvg(rows.Select(r => (r.MathScore, r.StudentCount))),
+            WeightedAvg(rows.Select(r => (r.ThaiScore, r.StudentCount))),
+            WeightedAvg(rows.Select(r => (r.TotalScore, r.StudentCount))),
             Dist(rows.Select(r => r.MathLevel)), Dist(rows.Select(r => r.ThaiLevel)), Dist(rows.Select(r => r.TotalLevel))));
     }
 
@@ -202,11 +209,16 @@ public class GuestAcademicInfoController : ControllerBase
             SELECT r."SmisCode"       AS "SmisCode",
                    s."NameTh"         AS "SchoolName",
                    r."SchoolSize"     AS "SchoolSize",
+                   q."TotalStudents"  AS "StudentCount",
                    r."ReadAloudScore" AS "ReadAloudScore", r."ReadAloudPct" AS "ReadAloudPct", r."ReadAloudLevel" AS "ReadAloudLevel",
                    r."ReadCompScore"  AS "ReadCompScore",  r."ReadCompPct"  AS "ReadCompPct",  r."ReadCompLevel"  AS "ReadCompLevel",
                    r."TotalPct"       AS "TotalPct",       r."TotalLevel"   AS "TotalLevel"
             FROM "RtSchoolResults" r
             JOIN "Schools" s ON s."SmisCode" = r."SmisCode" AND s."DeletedAt" IS NULL
+            LEFT JOIN "QrSchoolResults" q
+                   ON q."SmisCode" = r."SmisCode"
+                  AND q."EducationYear" = r."EducationYear"
+                  AND q."GradeLevel" = 'P1'
             WHERE r."EducationYear" = {year}
             """).ToListAsync(ct);
 
@@ -228,7 +240,9 @@ public class GuestAcademicInfoController : ControllerBase
 
         return Ok(new GuestRtSummaryDto(
             year.Value, rows.Count,
-            Avg(rows.Select(r => r.ReadAloudPct)), Avg(rows.Select(r => r.ReadCompPct)), Avg(rows.Select(r => r.TotalPct)),
+            WeightedAvg(rows.Select(r => (r.ReadAloudPct, r.StudentCount))),
+            WeightedAvg(rows.Select(r => (r.ReadCompPct, r.StudentCount))),
+            WeightedAvg(rows.Select(r => (r.TotalPct, r.StudentCount))),
             Dist(rows.Select(r => r.ReadAloudLevel)), Dist(rows.Select(r => r.ReadCompLevel)), Dist(rows.Select(r => r.TotalLevel))));
     }
 
@@ -324,16 +338,34 @@ public class GuestAcademicInfoController : ControllerBase
             FROM "OnetSchoolResults" GROUP BY 1, 2 ORDER BY 1 DESC
             """).ToListAsync(ct);
 
+        // Plan #111 D1 — weighted by ป.3 pupil counts, matching nt/summary.
+        // COALESCE keeps a year without imported counts on the plain mean
+        // rather than returning NULL.
         var ntYears = await _context.Database.SqlQuery<SimpleYearAggRow>($"""
-            SELECT "EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
-                   ROUND(AVG("MathScore"), 2) AS "V1", ROUND(AVG("ThaiScore"), 2) AS "V2", ROUND(AVG("TotalScore"), 2) AS "V3"
-            FROM "NtSchoolResults" GROUP BY 1 ORDER BY 1 DESC
+            SELECT n."EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
+                   COALESCE(ROUND(SUM(n."MathScore"  * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(n."MathScore"), 2))  AS "V1",
+                   COALESCE(ROUND(SUM(n."ThaiScore"  * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(n."ThaiScore"), 2))  AS "V2",
+                   COALESCE(ROUND(SUM(n."TotalScore" * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(n."TotalScore"), 2)) AS "V3"
+            FROM "NtSchoolResults" n
+            LEFT JOIN "QrSchoolResults" q
+                   ON q."SmisCode" = n."SmisCode"
+                  AND q."EducationYear" = n."EducationYear"
+                  AND q."GradeLevel" = 'P3'
+            GROUP BY 1 ORDER BY 1 DESC
             """).ToListAsync(ct);
 
+        // Plan #111 D1 — weighted by ป.1 pupil counts, matching rt/summary.
         var rtYears = await _context.Database.SqlQuery<SimpleYearAggRow>($"""
-            SELECT "EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
-                   ROUND(AVG("ReadAloudPct"), 2) AS "V1", ROUND(AVG("ReadCompPct"), 2) AS "V2", ROUND(AVG("TotalPct"), 2) AS "V3"
-            FROM "RtSchoolResults" GROUP BY 1 ORDER BY 1 DESC
+            SELECT r."EducationYear" AS "Year", COUNT(*)::int AS "SchoolCount",
+                   COALESCE(ROUND(SUM(r."ReadAloudPct" * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(r."ReadAloudPct"), 2)) AS "V1",
+                   COALESCE(ROUND(SUM(r."ReadCompPct"  * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(r."ReadCompPct"), 2))  AS "V2",
+                   COALESCE(ROUND(SUM(r."TotalPct"     * q."TotalStudents") / NULLIF(SUM(q."TotalStudents"), 0), 2), ROUND(AVG(r."TotalPct"), 2))     AS "V3"
+            FROM "RtSchoolResults" r
+            LEFT JOIN "QrSchoolResults" q
+                   ON q."SmisCode" = r."SmisCode"
+                  AND q."EducationYear" = r."EducationYear"
+                  AND q."GradeLevel" = 'P1'
+            GROUP BY 1 ORDER BY 1 DESC
             """).ToListAsync(ct);
 
         var qrYears = await _context.Database.SqlQuery<QrYearAggRow>($"""
@@ -424,6 +456,28 @@ public class GuestAcademicInfoController : ControllerBase
             qr.OrderByDescending(r => r.Year).ThenBy(r => Array.IndexOf(QrGrades, r.Grade)).ToList()));
     }
 
+    /// <summary>
+    /// Plan #111 D1 — area mean weighted by the number of pupils each school
+    /// tested, i.e. Σ(score × pupils) / Σ(pupils). A plain mean of per-school
+    /// averages gave a 20-pupil school the same weight as a 167-pupil one, so
+    /// the published RT/NT figures were wrong (a user reported RT อ่านออกเสียง
+    /// should read ~82.6, not 83.61). O-NET already computed it this way.
+    /// Falls back to the unweighted mean when no counts are available, so the
+    /// endpoint still answers for a year whose QR counts were never imported.
+    /// </summary>
+    private static decimal? WeightedAvg(IEnumerable<(decimal? Value, int? Weight)> rows)
+    {
+        var xs = rows.Where(r => r.Value.HasValue).ToList();
+        if (xs.Count == 0) return null;
+
+        var totalWeight = xs.Sum(r => (long)(r.Weight ?? 0));
+        if (totalWeight <= 0)
+            return Math.Round(xs.Average(r => r.Value!.Value), 2);
+
+        var weighted = xs.Sum(r => r.Value!.Value * (r.Weight ?? 0));
+        return Math.Round(weighted / totalWeight, 2);
+    }
+
     private static decimal? Avg(IEnumerable<decimal?> values)
     {
         var xs = values.Where(v => v.HasValue).Select(v => v!.Value).ToList();
@@ -500,6 +554,8 @@ public record GuestOnetSchoolSubjectDto(string Subject, int TestTakers, decimal 
 public class NtRow
 {
     public string SmisCode { get; set; } = "";
+    /// <summary>ป.3 test-taker count, used to weight the area average (Plan #111 D1).</summary>
+    public int? StudentCount { get; set; }
     public string SchoolName { get; set; } = "";
     public string? SchoolSize { get; set; }
     public decimal? MathScore { get; set; }
@@ -513,6 +569,8 @@ public class NtRow
 public class RtRow
 {
     public string SmisCode { get; set; } = "";
+    /// <summary>ป.1 test-taker count, used to weight the area average (Plan #111 D1).</summary>
+    public int? StudentCount { get; set; }
     public string SchoolName { get; set; } = "";
     public string? SchoolSize { get; set; }
     public decimal? ReadAloudScore { get; set; }
