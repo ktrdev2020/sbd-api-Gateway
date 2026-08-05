@@ -188,22 +188,40 @@ public class GuestPersonnelInfoController : ControllerBase
     public async Task<ActionResult> GetTeachers(
         [FromQuery] int offset = 0,
         [FromQuery] int limit = 50,
-        [FromQuery] string? q = null)
+        [FromQuery] string? q = null,
+        // Plan #112 id=35 — narrow the list without leaving the page
+        [FromQuery] string? schoolCode = null,
+        [FromQuery] string? subjectArea = null,
+        [FromQuery] string? position = null,
+        [FromQuery] string? gender = null)
     {
         if (limit > 100) limit = 100;
         if (limit < 1) limit = 50;
         if (offset < 0) offset = 0;
 
-        var query = _context.Personnel
-            .Where(p => p.TrashedAt == null && p.PersonnelTypeNav != null)
-            .Where(p => p.PersonnelTypeNav!.Code == "Teacher" || p.PersonnelTypeNav.Code == "Director")
-            .Where(p => p.SchoolAssignments.Any(a => a.IsPrimary && a.School.AreaId == AreaId));
+        var query = BaseTeacherQuery();
 
         if (!string.IsNullOrWhiteSpace(q))
         {
             query = query.Where(p =>
                 p.FirstName.Contains(q) ||
                 p.LastName.Contains(q));
+        }
+
+        if (!string.IsNullOrWhiteSpace(schoolCode))
+            query = query.Where(p => p.SchoolAssignments.Any(a => a.IsPrimary && a.SchoolCode == schoolCode));
+
+        if (!string.IsNullOrWhiteSpace(subjectArea))
+            query = query.Where(p => p.SubjectAreaNav != null && p.SubjectAreaNav.NameTh == subjectArea);
+
+        if (!string.IsNullOrWhiteSpace(position))
+            query = query.Where(p => p.PositionType != null && p.PositionType.NameTh == position);
+
+        // Gender is a single char in the schema; accept "M"/"F" from the query string.
+        if (!string.IsNullOrWhiteSpace(gender))
+        {
+            var g = char.ToUpperInvariant(gender.Trim()[0]);
+            query = query.Where(p => p.Gender == g);
         }
 
         var total = await query.CountAsync();
@@ -222,12 +240,58 @@ public class GuestPersonnelInfoController : ControllerBase
                 p.SchoolAssignments
                     .Where(a => a.IsPrimary)
                     .Select(a => a.School.NameTh)
-                    .FirstOrDefault()
+                    .FirstOrDefault(),
+                p.SchoolAssignments
+                    .Where(a => a.IsPrimary)
+                    .Select(a => a.SchoolCode)
+                    .FirstOrDefault(),
+                p.SubjectAreaNav != null ? p.SubjectAreaNav.NameTh : null,
+                p.Gender == 'M' ? "M" : p.Gender == 'F' ? "F" : null
             ))
             .ToListAsync();
 
         return Ok(new { data = items, total, offset, limit });
     }
+
+    /// <summary>
+    /// Plan #112 id=35 — the values that actually occur in this area, with counts.
+    /// Built from the same base query as the list so an option can never come back empty.
+    /// </summary>
+    [HttpGet("teachers/filters")]
+    [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<GuestTeacherFilterOptionsDto>> GetTeacherFilters()
+    {
+        var schools = await BaseTeacherQuery()
+            .SelectMany(p => p.SchoolAssignments.Where(a => a.IsPrimary)
+                .Select(a => new { a.SchoolCode, a.School.NameTh }))
+            .GroupBy(x => new { x.SchoolCode, x.NameTh })
+            .Select(g => new GuestOptionDto(g.Key.SchoolCode, g.Key.NameTh, g.Count()))
+            .OrderBy(o => o.Label)
+            .ToListAsync();
+
+        var subjects = await BaseTeacherQuery()
+            .Where(p => p.SubjectAreaNav != null)
+            .GroupBy(p => p.SubjectAreaNav!.NameTh)
+            .Select(g => new GuestOptionDto(g.Key, g.Key, g.Count()))
+            .OrderByDescending(o => o.Count)
+            .ToListAsync();
+
+        var positions = await BaseTeacherQuery()
+            .Where(p => p.PositionType != null)
+            .GroupBy(p => p.PositionType!.NameTh)
+            .Select(g => new GuestOptionDto(g.Key, g.Key, g.Count()))
+            .OrderByDescending(o => o.Count)
+            .ToListAsync();
+
+        return Ok(new GuestTeacherFilterOptionsDto(schools, subjects, positions));
+    }
+
+    /// <summary>Teachers and directors of this area — the one definition both endpoints use.</summary>
+    private IQueryable<SBD.Domain.Entities.Personnel> BaseTeacherQuery() =>
+        _context.Personnel
+            .Where(p => p.TrashedAt == null && p.PersonnelTypeNav != null)
+            .Where(p => p.PersonnelTypeNav!.Code == "Teacher" || p.PersonnelTypeNav.Code == "Director")
+            .Where(p => p.SchoolAssignments.Any(a => a.IsPrimary && a.School.AreaId == AreaId));
 
     // ── Helpers ────────────────────────────────────────────────────────
 
@@ -285,5 +349,18 @@ public record GuestTeacherListItemDto(
     string TypeCode,
     string TypeName,
     string? PositionName,
-    string? SchoolName
+    string? SchoolName,
+    // Plan #112 id=35 — shown on the card and used by the filter bar
+    string? SchoolCode,
+    string? SubjectArea,
+    string? Gender
 );
+
+/// <summary>Option lists for the /teachers filter bar, scoped to this area.</summary>
+public record GuestTeacherFilterOptionsDto(
+    IReadOnlyList<GuestOptionDto> Schools,
+    IReadOnlyList<GuestOptionDto> SubjectAreas,
+    IReadOnlyList<GuestOptionDto> Positions
+);
+
+public record GuestOptionDto(string Value, string Label, int Count);
