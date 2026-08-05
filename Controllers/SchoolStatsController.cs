@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Infrastructure.Data;
 
+using Gateway.Services;
+
 namespace Gateway.Controllers;
 
 /// <summary>
@@ -19,7 +21,8 @@ public class SchoolStatsController : ControllerBase
     private readonly GatewayDbContext _db;
 
     // GatewayDbContext is registered as SbdDbContext in DI — cast on constructor.
-    public SchoolStatsController(SbdDbContext db) { _db = (GatewayDbContext)db; }
+    private readonly ISchoolWriteScope _scope;
+    public SchoolStatsController(SbdDbContext db, ISchoolWriteScope scope) { _db = (GatewayDbContext)db; _scope = scope; }
 
     // ─── Grade Stats (จำนวนนักเรียนแยกระดับชั้น) ─────────────────────────
 
@@ -39,6 +42,9 @@ public class SchoolStatsController : ControllerBase
     public async Task<ActionResult<List<GradeStatDto>>> SaveGradeStats(
         string schoolCode, [FromQuery] int? year, [FromBody] List<GradeStatUpsertRow> rows)
     {
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var academicYear = year ?? CurrentAcademicYear();
 
         // Bulk replace (D6) — delete existing for that year, then insert new
@@ -64,7 +70,8 @@ public class SchoolStatsController : ControllerBase
 
         // Update Schools.StudentCount cache (denormalized — D4)
         var totalStudents = newRows.Sum(r => r.MaleCount + r.FemaleCount);
-        var school = await _db.Schools.FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
+        var school = await _db.Schools.AsTracking().FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school != null) { school.StudentCount = totalStudents; await _db.SaveChangesAsync(); }
 
         return Ok(newRows.OrderBy(r => r.GradeOrder).Select(MapGrade).ToList());
@@ -89,6 +96,9 @@ public class SchoolStatsController : ControllerBase
     public async Task<ActionResult<List<PersonnelTypeStatDto>>> SavePersonnelTypeStats(
         string schoolCode, [FromQuery] int? year, [FromBody] List<PersonnelTypeStatUpsertRow> rows)
     {
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var academicYear = year ?? CurrentAcademicYear();
 
         var existing = _db.SchoolPersonnelTypeStats
@@ -112,7 +122,8 @@ public class SchoolStatsController : ControllerBase
 
         // Update Schools.TeacherCount cache (denormalized — D4)
         var totalPersonnel = newRows.Sum(r => r.MaleCount + r.FemaleCount);
-        var school = await _db.Schools.FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
+        var school = await _db.Schools.AsTracking().FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school != null) { school.TeacherCount = totalPersonnel; await _db.SaveChangesAsync(); }
 
         return Ok(newRows.OrderBy(r => r.TypeOrder).Select(MapType).ToList());

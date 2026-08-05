@@ -1011,6 +1011,7 @@ public class PersonnelAdminController(
         if (deny is not null) return deny;
 
         var p = await db.Personnel
+            .AsTracking()
             .Include(x => x.SchoolAssignments)
             .Include(x => x.User)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -1067,6 +1068,7 @@ public class PersonnelAdminController(
             return Forbid();
 
         var p = await db.Personnel
+            .AsTracking()
             .Include(x => x.SchoolAssignments)
             .Include(x => x.User)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -1139,6 +1141,7 @@ public class PersonnelAdminController(
             return Forbid();
 
         var p = await db.Personnel
+            .AsTracking()
             .Include(x => x.SchoolAssignments)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
         if (p is null) return NotFound();
@@ -1225,6 +1228,7 @@ public class PersonnelAdminController(
         if (deny is not null) return deny;
 
         var p = await db.Personnel
+            .AsTracking()
             .Include(x => x.User)
             .Include(x => x.SchoolAssignments)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -1285,6 +1289,7 @@ public class PersonnelAdminController(
         if (scope is null) return Forbid();
 
         var p = await db.Personnel
+            .AsTracking()
             .Include(x => x.User)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
         if (p is null) return NotFound();
@@ -1317,7 +1322,7 @@ public class PersonnelAdminController(
         var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return Forbid();
 
-        var p = await db.Personnel.FirstOrDefaultAsync(x => x.Id == id, ct);
+        var p = await db.Personnel.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (p is null) return NotFound();
         if (p.AffiliationStatus != "trashed")
             return BadRequest(new { error = "บุคลากรนี้ไม่ได้อยู่ในถังขยะ" });
@@ -1397,6 +1402,7 @@ public class PersonnelAdminController(
         if (deny is not null) return deny;
 
         var entry = await db.PersonnelEducations
+            .AsTracking()
             .FirstOrDefaultAsync(e => e.Id == eduId && e.PersonnelId == id, ct);
         if (entry is null) return NotFound();
 
@@ -1621,6 +1627,7 @@ public class PersonnelAdminController(
         string schoolCode, int academicYearId, CancellationToken ct)
     {
         var cycle = await db.PersonnelApprovalCycles
+            .AsTracking()
             .FirstOrDefaultAsync(c =>
                 c.SchoolCode == schoolCode && c.AcademicYearId == academicYearId, ct);
 

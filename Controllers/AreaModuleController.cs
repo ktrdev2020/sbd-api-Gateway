@@ -11,6 +11,12 @@ namespace Gateway.Controllers;
 [Authorize]
 public class AreaModuleController : ControllerBase
 {
+    // Plan #111 Phase S — every write here changes which modules a whole area
+    // (and its 196 schools) can see. It used to be reachable by any signed-in
+    // user, including the ~2,400 teacher accounts. Reads stay open to any
+    // authenticated caller; writes are admin-only and scope-checked below.
+    private const string AdminRoles = "super_admin,SuperAdmin,area_admin,AreaAdmin";
+
     private readonly SbdDbContext _context;
 
     public AreaModuleController(SbdDbContext context)
@@ -50,6 +56,7 @@ public class AreaModuleController : ControllerBase
     /// <summary>
     /// Assign a module to an area.
     /// </summary>
+    [Authorize(Roles = AdminRoles)]
     [HttpPost("{moduleId:int}")]
     public async Task<ActionResult<AreaModuleDto>> AssignModule(
         int areaId, int moduleId, [FromBody] AssignAreaModuleRequest? request = null)
@@ -94,6 +101,7 @@ public class AreaModuleController : ControllerBase
     /// <summary>
     /// Update an area module assignment (enable/disable, allow school self-enable).
     /// </summary>
+    [Authorize(Roles = AdminRoles)]
     [HttpPut("{moduleId:int}")]
     public async Task<ActionResult> UpdateAssignment(
         int areaId, int moduleId, [FromBody] UpdateAreaModuleRequest request)
@@ -117,6 +125,7 @@ public class AreaModuleController : ControllerBase
     /// <summary>
     /// Remove a module from an area.
     /// </summary>
+    [Authorize(Roles = AdminRoles)]
     [HttpDelete("{moduleId:int}")]
     public async Task<ActionResult> RemoveModule(int areaId, int moduleId)
     {
@@ -186,6 +195,7 @@ public class AreaModuleController : ControllerBase
     /// <summary>
     /// Toggle enable/disable a module for a specific school within an area (data is preserved).
     /// </summary>
+    [Authorize(Roles = AdminRoles)]
     [HttpPut("{moduleId:int}/schools/{schoolModuleId:int}/toggle")]
     public async Task<ActionResult> ToggleSchoolModuleByArea(int areaId, int moduleId, int schoolModuleId)
     {
@@ -206,6 +216,7 @@ public class AreaModuleController : ControllerBase
     /// <summary>
     /// Assign a module to specific schools within an area (e.g. for pilot programs).
     /// </summary>
+    [Authorize(Roles = AdminRoles)]
     [HttpPost("{moduleId:int}/schools")]
     public async Task<ActionResult> AssignModuleToSchools(
         int areaId, int moduleId, [FromBody] AssignModuleToSchoolsRequest request)

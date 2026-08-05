@@ -258,7 +258,9 @@ public class MeTeacherDashboardController : ControllerBase
         if (url is null) return BadRequest(new { message = "Upload failed" });
 
         var userId = CurrentUserId!.Value;
-        var personnel = await _db.Personnel.FirstOrDefaultAsync(p => p.UserId == userId, ct);
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs),
+        // so this assignment would never be persisted.
+        var personnel = await _db.Personnel.AsTracking().FirstOrDefaultAsync(p => p.UserId == userId, ct);
         if (personnel == null) return NotFound();
         personnel.Photo = url;
         await _db.SaveChangesAsync(ct);
@@ -274,7 +276,9 @@ public class MeTeacherDashboardController : ControllerBase
         if (url is null) return BadRequest(new { message = "Upload failed" });
 
         var userId = CurrentUserId!.Value;
-        var personnel = await _db.Personnel.FirstOrDefaultAsync(p => p.UserId == userId, ct);
+        // AsTracking for symmetry with UploadPhoto — Entry() would attach a
+        // detached entity anyway, but relying on that is easy to break.
+        var personnel = await _db.Personnel.AsTracking().FirstOrDefaultAsync(p => p.UserId == userId, ct);
         if (personnel == null) return NotFound();
         _db.Entry(personnel).Property("CoverPhoto").CurrentValue = url;
         await _db.SaveChangesAsync(ct);

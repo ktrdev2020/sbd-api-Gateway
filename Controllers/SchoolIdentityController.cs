@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Infrastructure.Data;
 
+using Gateway.Services;
+
 namespace Gateway.Controllers;
 
 /// <summary>
@@ -20,7 +22,8 @@ public class SchoolIdentityController : ControllerBase
     private readonly GatewayDbContext _db;
 
     // GatewayDbContext is registered as SbdDbContext in DI — cast on constructor.
-    public SchoolIdentityController(SbdDbContext db) { _db = (GatewayDbContext)db; }
+    private readonly ISchoolWriteScope _scope;
+    public SchoolIdentityController(SbdDbContext db, ISchoolWriteScope scope) { _db = (GatewayDbContext)db; _scope = scope; }
 
     [HttpGet]
     public async Task<ActionResult<SchoolIdentityDto>> Get(string schoolCode, [FromQuery] int? year)
@@ -53,9 +56,16 @@ public class SchoolIdentityController : ControllerBase
     public async Task<ActionResult<SchoolIdentityDto>> Upsert(
         string schoolCode, [FromQuery] int? year, [FromBody] SchoolIdentityUpsertRequest req)
     {
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var fiscalYear = year ?? CurrentFiscalYear();
 
+        // AsTracking is REQUIRED for the update path — the Gateway DbContext
+        // defaults to NoTracking, so without it the edits below are applied to
+        // a detached object and SaveChangesAsync silently writes nothing.
         var identity = await _db.SchoolIdentities
+            .AsTracking()
             .Include(i => i.Missions)
             .Include(i => i.Goals)
             .Include(i => i.Strategies)

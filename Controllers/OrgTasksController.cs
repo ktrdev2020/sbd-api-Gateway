@@ -101,7 +101,9 @@ public class OrgTasksController : ControllerBase
         var guard = await EnsureCanAccessAsync(wgId);
         if (guard != null) return guard;
 
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
         var task = await _db.SchoolOrgTasks
+            .AsTracking()
             .FirstOrDefaultAsync(t => t.Id == taskId && t.WorkGroupId == wgId);
         if (task == null) return NotFound();
 
@@ -145,7 +147,10 @@ public class OrgTasksController : ControllerBase
         if (guard != null) return guard;
 
         var ids = rows.Select(r => r.Id).ToList();
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs),
+        // so the SortOrder rewrite below would never be persisted.
         var tasks = await _db.SchoolOrgTasks
+            .AsTracking()
             .Where(t => t.WorkGroupId == wgId && ids.Contains(t.Id))
             .ToListAsync();
 

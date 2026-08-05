@@ -96,7 +96,10 @@ public class AuthorityEnterpriseController(SbdDbContext db) : ControllerBase
         var uid = CurrentUserId();
         if (uid is null) return Unauthorized();
 
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs),
+        // so the revoke below would never be persisted.
         var row = await db.JitElevations
+            .AsTracking()
             .FirstOrDefaultAsync(e => e.Id == id && e.UserId == uid && e.RevokedAt == null, ct);
 
         if (row is null) return NotFound();

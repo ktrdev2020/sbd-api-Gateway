@@ -68,7 +68,10 @@ public class AreaPoliciesController(
         [FromBody] TogglePolicyRequest request,
         CancellationToken ct)
     {
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs),
+        // so the else-branch below would mutate a detached entity and save nothing.
         var policy = await db.AreaPermissionPolicies
+            .AsTracking()
             .FirstOrDefaultAsync(p => p.AreaId == areaId && p.SchoolCode == null && p.PermissionCode == code, ct);
 
         if (policy is null)
@@ -159,7 +162,9 @@ public class AreaPoliciesController(
             .AnyAsync(s => s.SchoolCode == schoolCode && s.AreaId == areaId, ct);
         if (!schoolExists) return NotFound(new { error = "ไม่พบโรงเรียนในเขตนี้" });
 
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
         var policy = await db.AreaPermissionPolicies
+            .AsTracking()
             .FirstOrDefaultAsync(p =>
                 p.AreaId == areaId && p.SchoolCode == schoolCode && p.PermissionCode == code, ct);
 

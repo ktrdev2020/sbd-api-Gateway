@@ -18,13 +18,15 @@ public class SchoolController : ControllerBase
     private readonly SbdDbContext _context;
     private readonly ICacheService _cache;
     private readonly IPublishEndpoint _publish;
+    private readonly ISchoolWriteScope _scope;
     private const string CacheKey = "refdata:schools";
 
-    public SchoolController(SbdDbContext context, ICacheService cache, IPublishEndpoint publish)
+    public SchoolController(SbdDbContext context, ICacheService cache, IPublishEndpoint publish, ISchoolWriteScope scope)
     {
         _context = context;
         _cache = cache;
         _publish = publish;
+        _scope = scope;
     }
 
     // ─── Admin CRUD ───────────────────────────────────────────
@@ -332,6 +334,10 @@ public class SchoolController : ControllerBase
     [HttpPut("{schoolCode}/profile")]
     public async Task<ActionResult<SchoolDto>> UpdateProfile(string schoolCode, [FromBody] SchoolProfileUpdateRequest request)
     {
+        // Plan #111 Phase S — a caller may only edit their own school.
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var school = await _context.Schools.AsTracking()
             .Include(s => s.Area)
             .Include(s => s.AreaType)
@@ -392,6 +398,10 @@ public class SchoolController : ControllerBase
     public async Task<ActionResult<SchoolProfileExtendedDto>> UpdateProfileExtended(
         string schoolCode, [FromBody] SchoolProfileExtendedRequest request)
     {
+        // Plan #111 Phase S — a caller may only edit their own school.
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var school = await _context.Schools.AsTracking()
             .FirstOrDefaultAsync(s => s.SchoolCode == schoolCode);
         if (school == null) return NotFound(new { message = "School not found" });

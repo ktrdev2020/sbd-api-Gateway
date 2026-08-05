@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SBD.Infrastructure.Data;
 
+using Gateway.Services;
+
 namespace Gateway.Controllers;
 
 /// <summary>
@@ -17,7 +19,8 @@ namespace Gateway.Controllers;
 public class SchoolCommunityController : ControllerBase
 {
     private readonly GatewayDbContext _db;
-    public SchoolCommunityController(SbdDbContext db) { _db = (GatewayDbContext)db; }
+    private readonly ISchoolWriteScope _scope;
+    public SchoolCommunityController(SbdDbContext db, ISchoolWriteScope scope) { _db = (GatewayDbContext)db; _scope = scope; }
 
     private static int CurrentFiscalYear()
     {
@@ -137,8 +140,14 @@ public class SchoolCommunityController : ControllerBase
     public async Task<ActionResult<SchoolCommunityDto>> Upsert(
         string schoolCode, [FromQuery] int? year, [FromBody] SchoolCommunityUpsertRequest req)
     {
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var fiscalYear = year ?? CurrentFiscalYear();
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs),
+        // so the field assignments below would never reach the database.
         var ctx = await _db.SchoolCommunityContexts
+            .AsTracking()
             .FirstOrDefaultAsync(c => c.SchoolCode == schoolCode && c.FiscalYear == fiscalYear);
 
         if (ctx == null)
@@ -241,6 +250,9 @@ public class SchoolCommunityController : ControllerBase
     public async Task<ActionResult<List<BoardMemberDto>>> SaveBoard(
         string schoolCode, [FromQuery] int? year, [FromBody] List<BoardMemberUpsertRow> rows)
     {
+        if (!await _scope.CanWriteAsync(User, schoolCode))
+            return Forbid();
+
         var fiscalYear = year ?? CurrentFiscalYear();
         var existing = _db.SchoolBoardMembers
             .Where(b => b.SchoolCode == schoolCode && b.FiscalYear == fiscalYear);

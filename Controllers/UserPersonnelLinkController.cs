@@ -44,7 +44,8 @@ public class UserPersonnelLinkController(
             !new[] { "school", "area", "student" }.Contains(request.PersonnelContext))
             return BadRequest(new { error = "PersonnelContext must be 'school', 'area', or 'student'." });
 
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
+        var user = await db.Users.AsTracking().FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return NotFound(new { error = "User not found." });
 
         var previousContext = user.PersonnelContext;
@@ -84,7 +85,8 @@ public class UserPersonnelLinkController(
         [FromBody] UnlinkPersonnelRequest request,
         CancellationToken ct = default)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        // AsTracking required — DbContext defaults to NoTracking (Program.cs).
+        var user = await db.Users.AsTracking().FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return NotFound(new { error = "User not found." });
 
         if (user.PersonnelContext is null || user.PersonnelRefId is null)

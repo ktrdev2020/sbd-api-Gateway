@@ -85,6 +85,8 @@ builder.Services.AddScoped<SbdDbContext, GatewayDbContext>();
 
 // Phase B.4: capability grant lookup with Redis cache (cap_v keyed)
 builder.Services.AddScoped<Gateway.Services.ICapabilityService, Gateway.Services.CapabilityService>();
+// Plan #111 Phase S — school-ownership guard for school-profile write endpoints
+builder.Services.AddScoped<Gateway.Services.ISchoolWriteScope, Gateway.Services.SchoolWriteScope>();
 // Plan #47 — OrgStructure DOCX report (image-embedded · stateless)
 builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureImageRenderer>();
 builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureDocxGenerator>();

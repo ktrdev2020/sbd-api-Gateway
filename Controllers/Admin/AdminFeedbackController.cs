@@ -120,7 +120,10 @@ public class AdminFeedbackController : ControllerBase
         if (!AllowedStatuses.Contains(req.Status ?? string.Empty))
             return BadRequest(new { message = "status ต้องเป็น new/acknowledged/resolved/dismissed" });
 
-        var entry = await _db.FeedbackEntries.FirstOrDefaultAsync(f => f.Id == id);
+        // AsTracking is REQUIRED: the Gateway DbContext defaults to NoTracking
+        // (Program.cs), so an untracked entity would be mutated in memory and
+        // SaveChangesAsync would write nothing while still returning 200.
+        var entry = await _db.FeedbackEntries.AsTracking().FirstOrDefaultAsync(f => f.Id == id);
         if (entry is null) return NotFound();
 
         entry.Status = req.Status!.ToLowerInvariant();
