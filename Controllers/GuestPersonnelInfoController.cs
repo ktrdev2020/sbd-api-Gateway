@@ -261,27 +261,36 @@ public class GuestPersonnelInfoController : ControllerBase
     [ResponseCache(Duration = CacheSeconds, Location = ResponseCacheLocation.Any)]
     public async Task<ActionResult<GuestTeacherFilterOptionsDto>> GetTeacherFilters()
     {
-        var schools = await BaseTeacherQuery()
+        // Ordering happens after materialising: EF cannot translate an OrderBy over
+        // a projected record, and these lists are small (≤196 schools, a handful of
+        // subjects and positions).
+        var schools = (await BaseTeacherQuery()
             .SelectMany(p => p.SchoolAssignments.Where(a => a.IsPrimary)
                 .Select(a => new { a.SchoolCode, a.School.NameTh }))
             .GroupBy(x => new { x.SchoolCode, x.NameTh })
-            .Select(g => new GuestOptionDto(g.Key.SchoolCode, g.Key.NameTh, g.Count()))
-            .OrderBy(o => o.Label)
-            .ToListAsync();
+            .Select(g => new { g.Key.SchoolCode, g.Key.NameTh, Count = g.Count() })
+            .ToListAsync())
+            .Select(x => new GuestOptionDto(x.SchoolCode, x.NameTh, x.Count))
+            .OrderBy(o => o.Label, StringComparer.Create(new System.Globalization.CultureInfo("th-TH"), true))
+            .ToList();
 
-        var subjects = await BaseTeacherQuery()
+        var subjects = (await BaseTeacherQuery()
             .Where(p => p.SubjectAreaNav != null)
             .GroupBy(p => p.SubjectAreaNav!.NameTh)
-            .Select(g => new GuestOptionDto(g.Key, g.Key, g.Count()))
-            .OrderByDescending(o => o.Count)
-            .ToListAsync();
+            .Select(g => new { Name = g.Key, Count = g.Count() })
+            .ToListAsync())
+            .OrderByDescending(x => x.Count)
+            .Select(x => new GuestOptionDto(x.Name, x.Name, x.Count))
+            .ToList();
 
-        var positions = await BaseTeacherQuery()
+        var positions = (await BaseTeacherQuery()
             .Where(p => p.PositionType != null)
             .GroupBy(p => p.PositionType!.NameTh)
-            .Select(g => new GuestOptionDto(g.Key, g.Key, g.Count()))
-            .OrderByDescending(o => o.Count)
-            .ToListAsync();
+            .Select(g => new { Name = g.Key, Count = g.Count() })
+            .ToListAsync())
+            .OrderByDescending(x => x.Count)
+            .Select(x => new GuestOptionDto(x.Name, x.Name, x.Count))
+            .ToList();
 
         return Ok(new GuestTeacherFilterOptionsDto(schools, subjects, positions));
     }
