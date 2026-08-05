@@ -318,7 +318,8 @@ public class GuestSchoolInfoController : ControllerBase
                    CASE WHEN "TeachesUpperSecondary" THEN 'm6'
                         WHEN "TeachesLowerSecondary" THEN 'm3'
                         ELSE 'p6' END AS "LevelType",
-                   d."NameTh" AS "District"
+                   d."NameTh" AS "District",
+                   COALESCE(s."LogoThumbnailUrl", s."LogoUrl") AS "LogoUrl"
             FROM "Schools" s
             LEFT JOIN "Addresses" a ON a."Id" = s."AddressId"
             LEFT JOIN "SubDistricts" sd ON sd."Id" = a."SubDistrictId"
@@ -432,4 +433,6 @@ public class GuestSchoolMapDto
     public decimal? Lng { get; set; }
     public string LevelType { get; set; } = "p6";
     public string? District { get; set; }
+    /// <summary>Plan #112 id=39 — shown in the map hover card when the school has one.</summary>
+    public string? LogoUrl { get; set; }
 }
