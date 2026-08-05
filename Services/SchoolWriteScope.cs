@@ -27,7 +27,7 @@ public interface ISchoolWriteScope
     Task<bool> CanWriteAsync(ClaimsPrincipal user, string schoolCode, CancellationToken ct = default);
 }
 
-public class SchoolWriteScope(SbdDbContext db) : ISchoolWriteScope
+public class SchoolWriteScope(SbdDbContext db, ICapabilityService capabilities) : ISchoolWriteScope
 {
     public async Task<bool> CanWriteAsync(ClaimsPrincipal user, string schoolCode, CancellationToken ct = default)
     {
@@ -53,6 +53,17 @@ public class SchoolWriteScope(SbdDbContext db) : ISchoolWriteScope
                 .AsNoTracking()
                 .AnyAsync(s => s.SchoolCode == schoolCode && s.AreaId == areaScopeId.Value, ct);
             if (inArea) return true;
+        }
+
+        // Plan #111 U7 — a director may delegate profile upkeep to a named staff
+        // member via an HCD capability grant, without handing over the whole
+        // SchoolAdmin role. Numeric school scope ids are the SchoolCode.
+        if (int.TryParse(schoolCode, out var schoolScopeNumeric))
+        {
+            var capV = long.TryParse(user.FindFirstValue("cap_v"), out var v) ? v : 0L;
+            if (await capabilities.HasCapabilityAsync(
+                    userId, capV, "school.profile.manage", "school", schoolScopeNumeric, ct))
+                return true;
         }
 
         // School-scoped role wins over the personnel posting.
