@@ -172,7 +172,11 @@ public class SchoolHomeroomController : ControllerBase
     }
 
     public record TeacherPickDto(int PersonnelId, string FirstName, string LastName, string? Photo, string? Position, int? PersonnelTypeId);
-    public record ClassroomDto(long GradeLevelId, string? GradeName, int LevelOrder, short ClassroomNumber, int StudentCount);
+    /// <param name="Label">Plan #111 U5 — display suffix for a school-defined room, e.g. "IEP".</param>
+    /// <param name="IsExtra">True when the room came from school_extra_classrooms rather than DMC.</param>
+    public record ClassroomDto(
+        long GradeLevelId, string? GradeName, int LevelOrder, short ClassroomNumber, int StudentCount,
+        string? Label = null, bool IsExtra = false);
     public record SetupDto(
         IReadOnlyList<ClassroomDto> Classrooms,
         IReadOnlyList<TeacherPickDto> Teachers,
@@ -222,7 +226,30 @@ public class SchoolHomeroomController : ControllerBase
                 a.AssignedByUserId, a.AssignedAt, a.EndDate)
         ).ToListAsync(ct);
 
-        var classrooms = await classroomsTask;
+        // Plan #111 U5 — merge rooms the school added itself. DMC wins on any
+        // (grade, room) it reports: it carries the real pupil count, and a
+        // school-defined row must never mask real enrolment data.
+        var extras = await _db.SchoolExtraClassrooms.AsNoTracking()
+            .Where(c => c.SchoolCode == schoolCode && c.AcademicYear == academicYear)
+            .ToListAsync(ct);
+
+        var classrooms = (await classroomsTask).ToList();
+        if (extras.Count > 0)
+        {
+            var known = classrooms
+                .Select(c => (c.GradeLevelId, c.ClassroomNumber))
+                .ToHashSet();
+
+            classrooms.AddRange(extras
+                .Where(e => !known.Contains((e.GradeLevelId, e.ClassroomNumber)))
+                .Select(e => new ClassroomDto(
+                    e.GradeLevelId, e.GradeName, e.LevelOrder, e.ClassroomNumber,
+                    StudentCount: 0, Label: e.Label, IsExtra: true)));
+
+            classrooms = classrooms
+                .OrderBy(c => c.LevelOrder).ThenBy(c => c.ClassroomNumber)
+                .ToList();
+        }
 
         return Ok(new SetupDto(classrooms, teachers, assignments));
     }
@@ -272,6 +299,88 @@ public class SchoolHomeroomController : ControllerBase
     /// exist for (target year, classroom, personnel) are silently skipped.
     /// Same authorization gate as POST.
     /// </summary>
+    // ─── Plan #111 U5 — school-defined classrooms ──────────────────────────
+
+    public record AddClassroomRequest(
+        long GradeLevelId, string? GradeName, int LevelOrder, short ClassroomNumber, string? Label);
+
+    /// <summary>
+    /// Add a room DMC does not report (e.g. ห้องเรียน IEP) so an advisor can be
+    /// assigned to it. Refuses to shadow a room DMC already reports — that room
+    /// exists already and carries a real pupil count.
+    /// </summary>
+    [HttpPost("classrooms")]
+    public async Task<IActionResult> AddClassroom(
+        string schoolCode, [FromQuery] short academicYear,
+        [FromBody] AddClassroomRequest req, CancellationToken ct)
+    {
+        if (!await CanAssignAsync(schoolCode, ct)) return Forbid();
+        if (req.ClassroomNumber <= 0)
+            return BadRequest(new { message = "หมายเลขห้องต้องมากกว่า 0" });
+
+        var exists = await _db.SchoolExtraClassrooms.AsNoTracking()
+            .AnyAsync(c => c.SchoolCode == schoolCode
+                        && c.AcademicYear == academicYear
+                        && c.GradeLevelId == req.GradeLevelId
+                        && c.ClassroomNumber == req.ClassroomNumber, ct);
+        if (exists)
+            return Conflict(new { message = "มีห้องเรียนนี้อยู่แล้ว" });
+
+        var row = new SchoolExtraClassroom
+        {
+            SchoolCode = schoolCode,
+            AcademicYear = academicYear,
+            GradeLevelId = req.GradeLevelId,
+            GradeName = req.GradeName,
+            LevelOrder = req.LevelOrder,
+            ClassroomNumber = req.ClassroomNumber,
+            Label = string.IsNullOrWhiteSpace(req.Label) ? null : req.Label.Trim(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedBy = CurrentUserId,
+        };
+        _db.SchoolExtraClassrooms.Add(row);
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new ClassroomDto(
+            row.GradeLevelId, row.GradeName, row.LevelOrder, row.ClassroomNumber,
+            StudentCount: 0, Label: row.Label, IsExtra: true));
+    }
+
+    /// <summary>
+    /// Remove a school-defined room. Rooms that come from DMC are not deletable
+    /// here — they disappear only when the enrolment data says so.
+    /// </summary>
+    [HttpDelete("classrooms")]
+    public async Task<IActionResult> DeleteClassroom(
+        string schoolCode,
+        [FromQuery] short academicYear,
+        [FromQuery] long gradeLevelId,
+        [FromQuery] short classroomNumber,
+        CancellationToken ct)
+    {
+        if (!await CanAssignAsync(schoolCode, ct)) return Forbid();
+
+        var row = await _db.SchoolExtraClassrooms.AsTracking()
+            .FirstOrDefaultAsync(c => c.SchoolCode == schoolCode
+                                   && c.AcademicYear == academicYear
+                                   && c.GradeLevelId == gradeLevelId
+                                   && c.ClassroomNumber == classroomNumber, ct);
+        if (row is null) return NotFound();
+
+        var hasAdvisor = await _db.TeacherHomeroomAssignments.AsNoTracking()
+            .AnyAsync(a => a.SchoolCode == schoolCode
+                        && a.AcademicYear == academicYear
+                        && a.GradeLevelId == gradeLevelId
+                        && a.ClassroomNumber == classroomNumber
+                        && a.DeletedAt == null, ct);
+        if (hasAdvisor)
+            return BadRequest(new { message = "ยังมีครูที่ปรึกษาในห้องนี้ กรุณายกเลิกก่อนลบห้อง" });
+
+        _db.SchoolExtraClassrooms.Remove(row);
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
     [HttpPost("copy-from-previous-year")]
     public async Task<ActionResult<CopyFromPreviousYearResponse>> CopyFromPreviousYear(
         string schoolCode, [FromBody] CopyFromPreviousYearRequest req, CancellationToken ct)

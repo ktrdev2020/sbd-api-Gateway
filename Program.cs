@@ -1372,6 +1372,30 @@ using (var scope = app.Services.CreateScope())
         CREATE INDEX IF NOT EXISTS ix_feedback_entries_role    ON feedback_entries (role);
         CREATE INDEX IF NOT EXISTS ix_feedback_entries_created ON feedback_entries (created_at);
     ");
+    // Plan #111 U5 — rooms a school adds itself (e.g. ห้องเรียน IEP, ห้องคู่ขนาน).
+    // Rooms normally come from DMC enrolments (grouped by grade + classroom
+    // number), which is correct for regular classes but cannot express a room
+    // DMC does not know about. These rows are MERGED with the DMC-derived list
+    // at read time and are never allowed to overwrite it — DMC stays the source
+    // of truth for anything it does report.
+    await db.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS school_extra_classrooms (
+            id              BIGSERIAL PRIMARY KEY,
+            school_code     VARCHAR(10) NOT NULL,
+            academic_year   SMALLINT    NOT NULL,
+            grade_level_id  BIGINT      NOT NULL,
+            grade_name      VARCHAR(60),
+            level_order     INT         NOT NULL DEFAULT 0,
+            classroom_number SMALLINT   NOT NULL,
+            label           VARCHAR(80),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by      INT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_extra_classroom
+            ON school_extra_classrooms (school_code, academic_year, grade_level_id, classroom_number);
+    ");
+    Console.WriteLine("[Seed] Plan #111 — school_extra_classrooms table ensured.");
+
     // Plan #111 A3 — reply visible to the reporter. admin_note stays internal;
     // these columns are what the person who filed the report gets to read.
     await db.Database.ExecuteSqlRawAsync(@"

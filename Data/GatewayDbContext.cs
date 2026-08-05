@@ -38,6 +38,8 @@ public class GatewayDbContext : SbdDbContext
     public DbSet<SchoolOrgTask> SchoolOrgTasks => Set<SchoolOrgTask>();
     // ── Plan #103 — Feedback FAB (user feedback per page/module/role) ──
     public DbSet<FeedbackEntry> FeedbackEntries => Set<FeedbackEntry>();
+    // Plan #111 U5 — rooms a school adds itself (merged with the DMC-derived list)
+    public DbSet<SchoolExtraClassroom> SchoolExtraClassrooms => Set<SchoolExtraClassroom>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -280,6 +282,25 @@ public class GatewayDbContext : SbdDbContext
                 .WithMany()
                 .HasForeignKey(e => e.WorkGroupId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── Plan #111 U5 — SchoolExtraClassroom ──
+        modelBuilder.Entity<SchoolExtraClassroom>(entity =>
+        {
+            entity.ToTable("school_extra_classrooms");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SchoolCode).HasColumnName("school_code").HasMaxLength(10).IsRequired();
+            entity.Property(e => e.AcademicYear).HasColumnName("academic_year");
+            entity.Property(e => e.GradeLevelId).HasColumnName("grade_level_id");
+            entity.Property(e => e.GradeName).HasColumnName("grade_name").HasMaxLength(60);
+            entity.Property(e => e.LevelOrder).HasColumnName("level_order");
+            entity.Property(e => e.ClassroomNumber).HasColumnName("classroom_number");
+            entity.Property(e => e.Label).HasColumnName("label").HasMaxLength(80);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
+            entity.Property(e => e.CreatedBy).HasColumnName("created_by");
+            entity.HasIndex(e => new { e.SchoolCode, e.AcademicYear, e.GradeLevelId, e.ClassroomNumber })
+                  .IsUnique().HasDatabaseName("ux_extra_classroom");
         });
 
         // ── Plan #103 — FeedbackEntry ──
