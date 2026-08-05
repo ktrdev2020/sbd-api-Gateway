@@ -1467,7 +1467,14 @@ using (var scope = app.Services.CreateScope())
         ('Guest','academic-info','ข้อมูลวิชาการ','fas fa-graduation-cap','/academic-info',6,TRUE,FALSE,'linear-gradient(135deg,#818cf8,#6366f1)'),
         ('Guest','analytics','วิเคราะห์','fas fa-chart-line','/analytics',7,TRUE,FALSE,'linear-gradient(135deg,#38bdf8,#0ea5e9)'),
         ('Guest','statistics','สถิติ/บริการ','fas fa-chart-bar','/statistics',8,TRUE,FALSE,'linear-gradient(135deg,#fbbf24,#d97706)'),
-        ('Guest','committee','คณะกรรมการ','fas fa-people-group','/committee',9,TRUE,FALSE,'linear-gradient(135deg,#34d399,#059669)')
+        ('Guest','committee','คณะกรรมการ','fas fa-people-group','/committee',9,TRUE,FALSE,'linear-gradient(135deg,#34d399,#059669)'),
+        -- Plan #111 Phase R — release notes page, signed-in roles only.
+        -- Absolute route (not basePath): one shared page for every console.
+        ('SuperAdmin','release-notes','มีอะไรใหม่','fas fa-bullhorn','/release-notes',90,TRUE,FALSE,NULL),
+        ('AreaAdmin','release-notes','มีอะไรใหม่','fas fa-bullhorn','/release-notes',90,TRUE,FALSE,NULL),
+        ('SchoolAdmin','release-notes','มีอะไรใหม่','fas fa-bullhorn','/release-notes',90,TRUE,FALSE,NULL),
+        ('Teacher','release-notes','มีอะไรใหม่','fas fa-bullhorn','/release-notes',90,TRUE,FALSE,NULL),
+        ('Student','release-notes','มีอะไรใหม่','fas fa-bullhorn','/release-notes',90,TRUE,FALSE,NULL)
         ON CONFLICT (""Role"",""ItemKey"") DO UPDATE SET
             ""Label""         = EXCLUDED.""Label"",
             ""Icon""          = EXCLUDED.""Icon"",
