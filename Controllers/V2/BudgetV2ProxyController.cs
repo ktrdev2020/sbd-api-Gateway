@@ -34,10 +34,28 @@ public class BudgetV2ProxyController : ControllerBase
         ?? Environment.GetEnvironmentVariable("BUDGET_API_URL")
         ?? "http://localhost:5040";
 
+    /// <summary>
+    /// Plan #111 F2 — endpoints the PUBLIC payslip viewer needs before the
+    /// visitor has any token. BudgetApi marks these [AllowAnonymous] itself,
+    /// but the class-level [Authorize] here rejected them at the Gateway, so
+    /// the public viewer could never authenticate at all (reported as
+    /// "ล๊อคอินไม่ได้"). Everything else still requires a JWT.
+    /// Kept as an explicit allow-list: a catch-all AllowAnonymous would expose
+    /// every current and future budget endpoint.
+    /// </summary>
+    private static readonly HashSet<string> AnonymousPaths =
+        new(StringComparer.OrdinalIgnoreCase) { "payslip/guest-auth" };
+
     [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH")]
     [Route("{**path}")]
+    [AllowAnonymous]
     public Task<IActionResult> Passthrough([FromRoute] string path, CancellationToken ct)
     {
+        // The action is AllowAnonymous so the allow-list can be evaluated here;
+        // anything not on it must still carry an authenticated identity.
+        if (!AnonymousPaths.Contains(path.TrimEnd('/')) && User.Identity?.IsAuthenticated != true)
+            return Task.FromResult<IActionResult>(Unauthorized());
+
         var method = HttpMethod.Parse(Request.Method);
         var target = $"/api/v2/budget/{path}{Request.QueryString}";
         return Forward(method, target, ct);
