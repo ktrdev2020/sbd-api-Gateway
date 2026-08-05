@@ -313,7 +313,7 @@ public class GuestSchoolInfoController : ControllerBase
     public async Task<ActionResult<IEnumerable<GuestSchoolMapDto>>> GetMap(CancellationToken ct)
     {
         var rows = await _context.Database.SqlQuery<GuestSchoolMapDto>($"""
-            SELECT s."SmisCode" AS "SmisCode", s."NameTh" AS "Name",
+            SELECT s."SmisCode" AS "SmisCode", s."SchoolCode" AS "SchoolCode", s."NameTh" AS "Name",
                    s."Latitude" AS "Lat", s."Longitude" AS "Lng",
                    CASE WHEN "TeachesUpperSecondary" THEN 'm6'
                         WHEN "TeachesLowerSecondary" THEN 'm3'
@@ -447,6 +447,13 @@ public record GuestSchoolClassificationDto(
 public class GuestSchoolMapDto
 {
     public string SmisCode { get; set; } = "";
+    /// <summary>
+    /// Feedback id=45 — the 10-digit OBEC code, so the map can link to the
+    /// public school profile. SmisCode above is the 8-digit DMC identifier and
+    /// is NOT interchangeable with it (see the school-code bridge note in
+    /// StudentApi): /School/public/{code} only accepts the OBEC code.
+    /// </summary>
+    public string SchoolCode { get; set; } = "";
     public string Name { get; set; } = "";
     public decimal? Lat { get; set; }
     public decimal? Lng { get; set; }
