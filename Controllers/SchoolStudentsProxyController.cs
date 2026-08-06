@@ -62,6 +62,15 @@ public class SchoolStudentsProxyController : ControllerBase
         ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
         ?? "http://localhost:5032";
 
+    /// <summary>
+    /// Feedback id=79/80/81 — title-prefix options for the student form.
+    /// School-independent, so it hangs off the absolute route rather than the
+    /// school-scoped one and needs no SmisCode translation.
+    /// </summary>
+    [HttpGet("~/api/v1/students/title-prefixes")]
+    public Task<IActionResult> TitlePrefixes(CancellationToken ct) =>
+        ForwardAsync(HttpMethod.Get, "/api/v1/students/title-prefixes", ct);
+
     [HttpGet]
     public async Task<IActionResult> List([FromRoute] string schoolCode, CancellationToken ct)
     {
