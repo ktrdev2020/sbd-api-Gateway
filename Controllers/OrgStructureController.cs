@@ -17,7 +17,9 @@ namespace Gateway.Controllers;
 public class OrgStructureController : ControllerBase
 {
     private readonly GatewayDbContext _db;
-    public OrgStructureController(SbdDbContext db) { _db = (GatewayDbContext)db; }
+    private readonly Gateway.Services.ICapabilityService _capabilities;
+    public OrgStructureController(SbdDbContext db, Gateway.Services.ICapabilityService capabilities)
+    { _db = (GatewayDbContext)db; _capabilities = capabilities; }
 
     private static int CurrentFiscalYear()
     {
@@ -30,7 +32,7 @@ public class OrgStructureController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<OrgStructureDto>> Get(string schoolCode, [FromQuery] int? year)
     {
-        if (!OrgScopeAuth.CanAccessSchool(User, schoolCode))
+        if (!await OrgScopeAuth.CanAccessSchoolAsync(User, schoolCode, _capabilities))
             return Forbid();
 
         var fiscalYear = year ?? CurrentFiscalYear();

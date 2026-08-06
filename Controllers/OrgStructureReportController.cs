@@ -20,9 +20,12 @@ public class OrgStructureReportController : ControllerBase
     private readonly OrgStructureController _composite;
     private readonly OrgStructureDocxGenerator _docx;
 
-    public OrgStructureReportController(SbdDbContext db, OrgStructureDocxGenerator docx)
+    public OrgStructureReportController(
+        SbdDbContext db,
+        OrgStructureDocxGenerator docx,
+        Gateway.Services.ICapabilityService capabilities)
     {
-        _composite = new OrgStructureController(db);
+        _composite = new OrgStructureController(db, capabilities);
         _docx = docx;
         // The base controller needs HttpContext to evaluate scope (User claim).
         _composite.ControllerContext = ControllerContext;

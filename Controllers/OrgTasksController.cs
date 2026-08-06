@@ -19,7 +19,9 @@ namespace Gateway.Controllers;
 public class OrgTasksController : ControllerBase
 {
     private readonly GatewayDbContext _db;
-    public OrgTasksController(SbdDbContext db) { _db = (GatewayDbContext)db; }
+    private readonly Gateway.Services.ICapabilityService _capabilities;
+    public OrgTasksController(SbdDbContext db, Gateway.Services.ICapabilityService capabilities)
+    { _db = (GatewayDbContext)db; _capabilities = capabilities; }
 
     /// <summary>Validate WG exists + is School scope + caller can access that school.</summary>
     /// <returns>null on success; an ActionResult (NotFound/BadRequest/Forbid) on failure.</returns>
@@ -33,7 +35,7 @@ public class OrgTasksController : ControllerBase
         if (wg.ScopeType != "School") return BadRequest(new { message = "OrgTask only supports ScopeType=School" });
         // WorkGroup.ScopeId = SchoolCode::int — reconstruct the 10-digit string
         var schoolCode = wg.ScopeId.ToString("D10");
-        if (!OrgScopeAuth.CanAccessSchool(User, schoolCode)) return Forbid();
+        if (!await OrgScopeAuth.CanAccessSchoolAsync(User, schoolCode, _capabilities)) return Forbid();
         return null;
     }
 
