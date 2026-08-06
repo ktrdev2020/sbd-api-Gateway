@@ -47,6 +47,10 @@ public class OrgStructureReportController : ControllerBase
 
         var ms = _docx.Generate(data);
         var safeName = $"org-structure-{schoolCode}-{data.FiscalYear}.docx";
-        return File(ms, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", safeName);
+        // Same defect BudgetApi hit in feedback id=41 — OpenXml 3.2.0 writes an
+        // absolute root-relationship target that only Word tolerates. Confirmed
+        // present in this endpoint's output on production before this fix.
+        return File(Gateway.Services.Reporting.DocxPackageNormalizer.Normalize(ms),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", safeName);
     }
 }
