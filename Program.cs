@@ -255,6 +255,14 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE ""Areas"" ADD COLUMN IF NOT EXISTS ""Longitude"" DOUBLE PRECISION NULL;
         UPDATE ""Areas"" SET ""Latitude"" = 14.6929508, ""Longitude"" = 104.2002493
         WHERE ""Code"" = 'ssk3' AND ""Latitude"" IS NULL;
+        -- Personnel: the legacy PersonnelType string column. The entity moved to
+        -- PersonnelTypeId (FK) and no longer maps this column at all, but the
+        -- table still declared it NOT NULL with no default — so every INSERT that
+        -- EF generated omitted it and Postgres rejected the row. Adding a member
+        -- of staff failed with a bare 500 for exactly that reason (reported when
+        -- a director tried to register an incoming director). Existing values are
+        -- left untouched; nothing reads them.
+        ALTER TABLE ""Personnel"" ALTER COLUMN ""PersonnelType"" DROP NOT NULL;
         -- Module: shadow property columns
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""VisibilityLevels"" VARCHAR(200) NOT NULL DEFAULT 'school';
         ALTER TABLE ""Modules"" ADD COLUMN IF NOT EXISTS ""RegistrationType"" VARCHAR(50) NOT NULL DEFAULT 'internal';
