@@ -120,15 +120,20 @@ public class CapabilityService(
     {
         var grants = await GetActiveGrantsAsync(userId, capVersion, ct);
 
+        // Scope names are compared case-insensitively: the grants table stores
+        // them lowercase ("school") while authz_functional_assignments stores
+        // "School", and both feed this check.
         static bool ScopeCovers(string grantScopeType, int? grantScopeId, string? scopeType, int? scopeId)
         {
             if (scopeType == null) return true; // caller didn't specify scope — any match
+            var from = grantScopeType.ToLowerInvariant();
+            var to = scopeType.ToLowerInvariant();
             // Scope check: grant must be at least as broad as requested scope
-            if (grantScopeType == "global") return true;
-            if (grantScopeType == scopeType && grantScopeId == scopeId) return true;
-            if (grantScopeType == "area" && scopeType is "school" or "department" or "classroom" or "self")
+            if (from == "global") return true;
+            if (from == to && grantScopeId == scopeId) return true;
+            if (from == "area" && to is "school" or "department" or "classroom" or "self")
                 return true;
-            if (grantScopeType == "school" && scopeType is "department" or "classroom" or "self")
+            if (from == "school" && to is "department" or "classroom" or "self")
                 return true;
             return false;
         }
