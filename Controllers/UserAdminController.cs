@@ -817,22 +817,48 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
         if (provider is null)
             return BadRequest(new { Error = "ผู้ใช้นี้ไม่ได้ใช้ระบบรหัสผ่าน" });
 
-        // Use caller-supplied password if provided, otherwise auto-generate
+        var targetUser = await db.Users.FindAsync([id], ct);
+
+        // Feedback id=76 — "กด reset รหัสผ่าน แล้ว ใช้งานไม่ได้ จริงๆ แล้ว
+        // รีเซ็ตแล้วก็จะได้ default รหัสผ่าน ก็คือเลขบัตรประชาชน".
+        //
+        // Reset used to mint a random string. That is defensible in isolation,
+        // but it does not match how every account in this district is created:
+        // the provisioning convention is password = national ID (the username),
+        // and that is what an administrator tells a teacher over the phone. The
+        // random string had to be copied out of one screen and relayed
+        // perfectly, and if the admin closed the page it was unrecoverable —
+        // so a "successful" reset still left the user locked out.
+        //
+        // Resetting to the username is safe here because the first-login gate
+        // detects a password equal to the username and forces a change before
+        // anything else can be done (AuthController.UsesDefaultPasswordAsync).
+        var defaultPassword = targetUser?.Username;
         var newPassword = !string.IsNullOrWhiteSpace(request?.NewPassword)
             ? request.NewPassword
-            : GenerateTempPassword();
+            : !string.IsNullOrWhiteSpace(defaultPassword) && defaultPassword!.Length >= 6
+                ? defaultPassword                       // the documented default
+                : GenerateTempPassword();               // usernames too short to be a password
 
         if (newPassword.Length < 6)
             return BadRequest(new { Error = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร" });
 
         provider.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
 
-        var user = await db.Users.FindAsync([id], ct);
-        if (user != null) user.UpdatedAt = DateTimeOffset.UtcNow;
+        if (targetUser != null) targetUser.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
         await TryRemoveCache(DetailKey(id));
-        return Ok(new { TempPassword = newPassword, Message = "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว กรุณาแจ้งรหัสชั่วคราวแก่ผู้ใช้" });
+
+        var isDefault = newPassword == defaultPassword;
+        return Ok(new
+        {
+            TempPassword = newPassword,
+            IsDefaultPassword = isDefault,
+            Message = isDefault
+                ? "รีเซ็ตเรียบร้อยแล้ว รหัสผ่านกลับเป็นค่าเริ่มต้น (เลขบัตรประชาชน) ระบบจะให้ผู้ใช้ตั้งรหัสใหม่เมื่อเข้าสู่ระบบครั้งแรก"
+                : "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว กรุณาแจ้งรหัสชั่วคราวแก่ผู้ใช้",
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
