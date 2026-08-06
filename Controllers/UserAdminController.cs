@@ -226,6 +226,11 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 .ThenInclude(p => p!.TitlePrefix)
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.PositionType)
+            // Feedback id=86 — PersonnelTypeCode was projected but the
+            // navigation was never Included, so it came back null on every row
+            // and the UI could only show the login role. A ธุรการ read as "ครู".
+            .Include(u => u.Personnel)
+                .ThenInclude(p => p!.PersonnelTypeNav)
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.SchoolAssignments.Where(sa => sa.IsPrimary))
                     .ThenInclude(sa => sa.School)
@@ -528,6 +533,11 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
                 .ThenInclude(p => p!.TitlePrefix)
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.PositionType)
+            // Feedback id=86 — PersonnelTypeCode was projected but the
+            // navigation was never Included, so it came back null on every row
+            // and the UI could only show the login role. A ธุรการ read as "ครู".
+            .Include(u => u.Personnel)
+                .ThenInclude(p => p!.PersonnelTypeNav)
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.SchoolAssignments)
                     .ThenInclude(sa => sa.School)
@@ -1106,6 +1116,11 @@ public class UserAdminController(SbdDbContext db, ICacheService cache, IPublishE
             .Where(u => u.PersonnelRefId != null && !u.UserRoles.Any())
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.PositionType)
+            // Feedback id=86 — PersonnelTypeCode was projected but the
+            // navigation was never Included, so it came back null on every row
+            // and the UI could only show the login role. A ธุรการ read as "ครู".
+            .Include(u => u.Personnel)
+                .ThenInclude(p => p!.PersonnelTypeNav)
             .Include(u => u.Personnel)
                 .ThenInclude(p => p!.SchoolAssignments.Where(sa => sa.IsPrimary))
             .ToListAsync(ct);
