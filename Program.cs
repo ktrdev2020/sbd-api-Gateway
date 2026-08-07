@@ -90,6 +90,8 @@ builder.Services.AddScoped<Gateway.Services.ISchoolWriteScope, Gateway.Services.
 // Plan #47 — OrgStructure DOCX report (image-embedded · stateless)
 builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureImageRenderer>();
 builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureDocxGenerator>();
+// Feedback id=80/83 — generic table→docx export for any list page.
+builder.Services.AddSingleton<Gateway.Services.Reporting.TableDocxGenerator>();
 
 // MinIO (for DMC CSV uploads)
 var minioEndpoint = builder.Configuration["MinIO:Endpoint"] ?? "localhost:9000";
