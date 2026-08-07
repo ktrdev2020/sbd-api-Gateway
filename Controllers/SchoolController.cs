@@ -48,7 +48,10 @@ public class SchoolController : ControllerBase
         ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
         ?? "http://localhost:5032";
 
-    private sealed record GuestPeriodRow(short AcademicYear, short Term, int StudentCount);
+    // Wire shape of StudentApi's GuestStudentPeriodDto — fields are named
+    // year/term/students there, NOT academicYear/studentCount. Verified
+    // against the record declaration, not assumed.
+    private sealed record GuestPeriodRow(short Year, short Term, int Students);
     private sealed record GuestSizeRow(string SchoolCode, int StudentCount);
 
     /// <summary>
@@ -77,7 +80,7 @@ public class SchoolController : ControllerBase
             if (latest is null) return null;
 
             var rows = await http.GetFromJsonAsync<List<GuestSizeRow>>(
-                $"{StudentApiBase}/api/v1/guest/schools/size-profile-batch?academicYear={latest.AcademicYear}&term={latest.Term}", ct);
+                $"{StudentApiBase}/api/v1/guest/schools/size-profile-batch?academicYear={latest.Year}&term={latest.Term}", ct);
             if (rows is null || rows.Count == 0) return null;
 
             var map = rows
