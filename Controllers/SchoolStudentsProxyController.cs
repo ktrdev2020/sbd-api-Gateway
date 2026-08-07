@@ -71,6 +71,17 @@ public class SchoolStudentsProxyController : ControllerBase
     public Task<IActionResult> TitlePrefixes(CancellationToken ct) =>
         ForwardAsync(HttpMethod.Get, "/api/v1/students/title-prefixes", ct);
 
+    /// <summary>
+    /// Plan #117 (id=95/103) — available DMC data periods for the school's
+    /// "รอบข้อมูล DMC" filter dropdown. SmisCode-bridged like every other route.
+    /// </summary>
+    [HttpGet("periods")]
+    public async Task<IActionResult> Periods([FromRoute] string schoolCode, CancellationToken ct)
+    {
+        var smis = await ResolveSmisAsync(schoolCode, ct);
+        return await ForwardAsync(HttpMethod.Get, $"/api/v1/school/{smis}/students/periods", ct);
+    }
+
     [HttpGet]
     public async Task<IActionResult> List([FromRoute] string schoolCode, CancellationToken ct)
     {

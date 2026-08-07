@@ -94,6 +94,17 @@ public class AreaStudentsProxyController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Plan #117 (id=103) — available DMC data periods across the area's
+    /// schools. schoolCodes auto-injected (SmisCode bridge) like the other routes.
+    /// </summary>
+    [HttpGet("periods")]
+    public async Task<IActionResult> Periods([FromRoute] long areaId, CancellationToken ct)
+    {
+        var query = await EnsureSchoolCodesAsync(areaId, ct);
+        return await ForwardGetAsync($"/api/v1/area/{areaId}/students/periods{query}", ct);
+    }
+
     [HttpGet]
     public async Task<IActionResult> ListStudents([FromRoute] long areaId, CancellationToken ct)
     {
