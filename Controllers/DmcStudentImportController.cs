@@ -10,12 +10,18 @@ using SBD.Messaging.Commands;
 namespace Gateway.Controllers;
 
 /// <summary>
-/// SuperAdmin-facing DMC CSV import endpoints. Gateway is the only HTTP surface
-/// — actual parsing lives in WorkerService and DB writes live in StudentApi.
+/// DMC CSV import endpoints — Gateway is the only HTTP surface; parsing lives
+/// in WorkerService and DB writes in StudentApi.
+///
+/// Plan #117 (id=110) — opened to AreaAdmin: the district delegates student
+/// data stewardship to area staff, so the import console now lives in the
+/// area console too. Role restriction added at the same time: this was
+/// previously plain [Authorize], which let ANY authenticated account (a
+/// teacher, a student) schedule a district-wide import.
 /// </summary>
 [ApiController]
 [Route("api/v1/dmc-student-import")]
-[Authorize]
+[Authorize(Roles = "super_admin,SuperAdmin,area_admin,AreaAdmin")]
 public class DmcStudentImportController : ControllerBase
 {
     private const string ImportBucket = "dmc-imports";
