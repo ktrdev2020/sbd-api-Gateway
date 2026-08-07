@@ -673,10 +673,26 @@ public class PersonnelAdminController(
         var scope = await GetCallerScopeAsync(readOnly: false, ct);
         if (scope is null) return Forbid();
 
-        // Enforce school context
-        var targetSchoolCode = scope.Role == "school_admin"
-            ? scope.SchoolCode!
-            : req.SchoolCode ?? throw new ArgumentException("schoolCode required");
+        // Enforce school context.
+        //
+        // Feedback id=104 — "การเพิ่มบุคลากรในหน้านี้ทำได้หรือยัง". It could not:
+        // an AreaAdmin covers every school in the district so the request has to
+        // name one, and this threw an unhandled ArgumentException when it did
+        // not — surfacing as a 500 with an empty body, i.e. a save that failed
+        // silently. A 400 with a Thai message lets the UI say what is missing.
+        string targetSchoolCode;
+        if (scope.Role == "school_admin")
+        {
+            targetSchoolCode = scope.SchoolCode!;
+        }
+        else if (!string.IsNullOrWhiteSpace(req.SchoolCode))
+        {
+            targetSchoolCode = req.SchoolCode!;
+        }
+        else
+        {
+            return BadRequest(new { error = "กรุณาระบุโรงเรียนที่สังกัด" });
+        }
 
         if (scope.Role != "super_admin" && !scope.AllowedSchoolCodes.Contains(targetSchoolCode))
             return Forbid();
