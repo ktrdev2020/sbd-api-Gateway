@@ -21,12 +21,76 @@ public class SchoolController : ControllerBase
     private readonly ISchoolWriteScope _scope;
     private const string CacheKey = "refdata:schools";
 
-    public SchoolController(SbdDbContext context, ICacheService cache, IPublishEndpoint publish, ISchoolWriteScope scope)
+    public SchoolController(
+        SbdDbContext context,
+        ICacheService cache,
+        IPublishEndpoint publish,
+        ISchoolWriteScope scope,
+        IHttpClientFactory httpFactory,
+        IConfiguration config,
+        ILogger<SchoolController> logger)
     {
         _context = context;
         _cache = cache;
         _publish = publish;
         _scope = scope;
+        _httpFactory = httpFactory;
+        _config = config;
+        _logger = logger;
+    }
+
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly IConfiguration _config;
+    private readonly ILogger<SchoolController> _logger;
+
+    private string StudentApiBase =>
+        _config["ServiceUrls:StudentApi"]
+        ?? Environment.GetEnvironmentVariable("STUDENT_API_URL")
+        ?? "http://localhost:5032";
+
+    private sealed record GuestPeriodRow(short AcademicYear, short Term, int StudentCount);
+    private sealed record GuestSizeRow(string SchoolCode, int StudentCount);
+
+    /// <summary>
+    /// Feedback id=112 — Schools.StudentCount is NULL for 179 of 196 schools
+    /// (it was never backfilled after the DMC import made student-db the
+    /// authority), so the public profile showed "นักเรียน 0" almost everywhere.
+    /// Pull live per-school headcounts from StudentApi's anonymous guest
+    /// endpoints (latest period → size-profile batch), keyed by SmisCode.
+    /// Cached 10 min; any failure returns null and callers keep the stored
+    /// column as before — the page can only get better, never break.
+    /// </summary>
+    private async Task<Dictionary<string, int>?> GetLiveHeadcountsAsync(CancellationToken ct)
+    {
+        const string cacheKey = "guest:school-headcounts:v1";
+        var cached = await _cache.GetAsync<Dictionary<string, int>>(cacheKey);
+        if (cached is { Count: > 0 }) return cached;
+
+        try
+        {
+            var http = _httpFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(10);
+
+            var periods = await http.GetFromJsonAsync<List<GuestPeriodRow>>(
+                $"{StudentApiBase}/api/v1/guest/student-info/periods", ct);
+            var latest = periods?.FirstOrDefault();
+            if (latest is null) return null;
+
+            var rows = await http.GetFromJsonAsync<List<GuestSizeRow>>(
+                $"{StudentApiBase}/api/v1/guest/schools/size-profile-batch?academicYear={latest.AcademicYear}&term={latest.Term}", ct);
+            if (rows is null || rows.Count == 0) return null;
+
+            var map = rows
+                .GroupBy(r => r.SchoolCode)
+                .ToDictionary(g => g.Key, g => g.First().StudentCount);
+            await _cache.SetAsync(cacheKey, map, TimeSpan.FromMinutes(10));
+            return map;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Live headcount enrichment unavailable — serving stored StudentCount");
+            return null;
+        }
     }
 
     // ─── Admin CRUD ───────────────────────────────────────────
@@ -535,6 +599,14 @@ public class SchoolController : ControllerBase
         var teacherCount = await _context.Set<PersonnelSchoolAssignment>()
             .CountAsync(psa => psa.SchoolCode == schoolCode
                 && (psa.EndDate == null || psa.EndDate >= countToday));
+
+        // Feedback id=112 — live headcount from student-db (keyed by SmisCode);
+        // the stored column is NULL for most schools, so the profile showed 0.
+        // Enrichment failure falls back to the stored value as before.
+        var headcounts = await GetLiveHeadcountsAsync(HttpContext.RequestAborted);
+        var smis = school.SmisCode ?? school.SchoolCode;
+        if (headcounts is not null && headcounts.TryGetValue(smis, out var liveCount))
+            school.StudentCount = liveCount;
 
         return Ok(MapToDto(school, teacherCount));
     }
