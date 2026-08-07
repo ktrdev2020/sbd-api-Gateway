@@ -33,8 +33,13 @@ public class TableReportController : ControllerBase
     private const int MaxCellLength = 500;
 
     private readonly TableDocxGenerator _generator;
+    private readonly TableXlsxGenerator _xlsx;
 
-    public TableReportController(TableDocxGenerator generator) => _generator = generator;
+    public TableReportController(TableDocxGenerator generator, TableXlsxGenerator xlsx)
+    {
+        _generator = generator;
+        _xlsx = xlsx;
+    }
 
     public record TableReportRequest(
         string? Title,
@@ -43,8 +48,34 @@ public class TableReportController : ControllerBase
         List<List<string>> Rows,
         bool Landscape = false);
 
+    /// <summary>Feedback id=95 — same payload, Excel instead of Word.</summary>
+    [HttpPost("table.xlsx")]
+    public IActionResult TableXlsx([FromBody] TableReportRequest req)
+    {
+        var bad = Validate(req);
+        if (bad is not null) return bad;
+
+        var (title, subtitle, headers, rows) = Normalise(req);
+        var stream = _xlsx.Generate(title, subtitle, headers, rows);
+        return File(stream,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"report-{DateTime.UtcNow.AddHours(7):yyyyMMdd-HHmm}.xlsx");
+    }
+
     [HttpPost("table.docx")]
     public IActionResult Table([FromBody] TableReportRequest req)
+    {
+        var bad = Validate(req);
+        if (bad is not null) return bad;
+
+        var (title, subtitle, headers, rows) = Normalise(req);
+        var stream = _generator.Generate(title, subtitle, headers, rows, req.Landscape);
+        return File(stream,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            $"report-{DateTime.UtcNow.AddHours(7):yyyyMMdd-HHmm}.docx");
+    }
+
+    private IActionResult? Validate(TableReportRequest req)
     {
         if (req.Headers is not { Count: > 0 })
             return BadRequest(new { error = "ต้องระบุหัวตารางอย่างน้อย 1 คอลัมน์" });
@@ -52,9 +83,16 @@ public class TableReportController : ControllerBase
             return BadRequest(new { error = $"คอลัมน์เกิน {MaxColumns}" });
         if (req.Rows is { Count: > MaxRows })
             return BadRequest(new { error = $"ข้อมูลเกิน {MaxRows} แถว กรุณากรองให้แคบลงก่อนพิมพ์" });
+        return null;
+    }
 
-        // Truncate rather than reject — a stray long cell should not cost the
-        // user their whole export.
+    /// <summary>
+    /// Truncates rather than rejects — a stray long cell should not cost the
+    /// user their whole export.
+    /// </summary>
+    private static (string, string, IReadOnlyList<string>, IReadOnlyList<IReadOnlyList<string>>)
+        Normalise(TableReportRequest req)
+    {
         static string Clamp(string? s) =>
             string.IsNullOrEmpty(s) ? string.Empty
             : s.Length <= MaxCellLength ? s
@@ -64,16 +102,8 @@ public class TableReportController : ControllerBase
         var rows = (req.Rows ?? new List<List<string>>())
             .Select(r => (IReadOnlyList<string>)r.Select(Clamp).ToList())
             .ToList();
+        var title = Clamp(req.Title) is { Length: > 0 } t ? t : "รายงาน";
 
-        var stream = _generator.Generate(
-            Clamp(req.Title) is { Length: > 0 } t ? t : "รายงาน",
-            Clamp(req.Subtitle),
-            headers,
-            rows,
-            req.Landscape);
-
-        var safeName = $"report-{DateTime.UtcNow.AddHours(7):yyyyMMdd-HHmm}.docx";
-        return File(stream,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", safeName);
+        return (title, Clamp(req.Subtitle), headers, rows);
     }
 }

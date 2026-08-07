@@ -92,6 +92,7 @@ builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureImageRender
 builder.Services.AddSingleton<Gateway.Services.Reporting.OrgStructureDocxGenerator>();
 // Feedback id=80/83 — generic table→docx export for any list page.
 builder.Services.AddSingleton<Gateway.Services.Reporting.TableDocxGenerator>();
+builder.Services.AddSingleton<Gateway.Services.Reporting.TableXlsxGenerator>();
 
 // MinIO (for DMC CSV uploads)
 var minioEndpoint = builder.Configuration["MinIO:Endpoint"] ?? "localhost:9000";
