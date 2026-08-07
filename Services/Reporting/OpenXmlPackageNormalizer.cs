@@ -3,7 +3,8 @@ using System.IO.Compression;
 namespace Gateway.Services.Reporting;
 
 /// <summary>
-/// Port of BudgetApi's normalizer of the same name (feedback id=41).
+/// Port of BudgetApi's DocxPackageNormalizer (feedback id=41), widened to
+/// every OpenXml package Gateway produces.
 ///
 /// <para>DocumentFormat.OpenXml 3.2.0 writes the package's root relationship
 /// with an <em>absolute</em> target — <c>Target="/word/document.xml"</c> — for
@@ -21,15 +22,15 @@ namespace Gateway.Services.Reporting;
 /// package would couple two services over eight lines of string replacement.
 /// If a third service needs it, promote it to SBD.Infrastructure then.</para>
 /// </summary>
-public static class DocxPackageNormalizer
+public static class OpenXmlPackageNormalizer
 {
     private const string RootRels = "_rels/.rels";
 
-    public static Stream Normalize(Stream docx)
+    public static Stream Normalize(Stream package)
     {
         var buffer = new MemoryStream();
-        docx.Position = 0;
-        docx.CopyTo(buffer);
+        package.Position = 0;
+        package.CopyTo(buffer);
 
         string original;
         buffer.Position = 0;

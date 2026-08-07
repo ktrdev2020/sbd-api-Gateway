@@ -51,7 +51,7 @@ public sealed class TableDocxGenerator
         ms.Position = 0;
         // Same absolute root-relationship defect as feedback id=41 — normalise
         // before the bytes leave the process, not at each call site.
-        return (MemoryStream)DocxPackageNormalizer.Normalize(ms);
+        return (MemoryStream)OpenXmlPackageNormalizer.Normalize(ms);
     }
 
     private static Paragraph Heading(string text, int halfPoints, bool bold)

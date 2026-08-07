@@ -60,7 +60,11 @@ public sealed class TableXlsxGenerator
         }
 
         ms.Position = 0;
-        return ms;
+        // OpenXml 3.2.0 writes the package root relationship with an absolute
+        // target for spreadsheets too — verified against production output:
+        // Target="/xl/workbook.xml". Same defect, same fix as the Word path
+        // (feedback id=41); the normaliser is format-agnostic.
+        return (MemoryStream)OpenXmlPackageNormalizer.Normalize(ms);
     }
 
     private static Row RowOf(IReadOnlyList<string> values)
